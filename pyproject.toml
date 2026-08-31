@@ -27,6 +27,11 @@ Repository = "https://github.com/JamesCrumble/fastxlsxio"
 [tool.maturin]
 features = ["pyo3/extension-module"]
 
+[profile.release]
+opt-level = 3       # Maximum optimization level (default for release)
+lto = true          # Enable Link-Time Optimization across crates
+codegen-units = 1   # Reduce parallel code generation units for better optimization
+
 [project.optional-dependencies]
 bench = [
     "pytest",

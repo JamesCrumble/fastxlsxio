@@ -288,9 +288,9 @@ class ReadOnlyWorkbook:
         }
         """
 
-class WriteOnlyWorksheet:
-    """Write-only worksheet class"""
-    def __init__(self, title: str) -> WriteOnlyWorksheet:
+class XIOWorksheet:
+    """xlsxwriter worksheet like class"""
+    def __init__(self, title: str) -> XIOWorksheet:
         """Initialize a new worksheet with the specified title.
 
         Parameters
@@ -381,10 +381,10 @@ class WriteOnlyWorksheet:
             DType.Any allow each item have different type, but will also increase the time cost.
         """
 
-class WriteOnlyWorkbook:
-    """Write-only workbook class"""
-    def __init__(self) -> WriteOnlyWorkbook: ...
-    def create_sheet(self, name: str) -> WriteOnlyWorksheet:
+class XIOWorkbook:
+    """xlsxwriter workbook like class"""
+    def __init__(self) -> XIOWorkbook: ...
+    def create_sheet(self, name: str) -> XIOWorksheet:
         """Create a new worksheet with the specified name.
 
         Parameters
@@ -394,12 +394,12 @@ class WriteOnlyWorkbook:
 
         Returns
         -------
-        WriteOnlyWorksheet
+        XIOWorksheet
             The newly created worksheet.
         """
 
-    def create_sheet_with_constant_memory(self, name: str) -> WriteOnlyWorksheet: ...
-    def get_by_idx(self, idx: int) -> WriteOnlyWorksheet:
+    def create_sheet_with_constant_memory(self, name: str) -> XIOWorksheet: ...
+    def get_by_idx(self, idx: int) -> XIOWorksheet:
         """Get a worksheet by its index.
 
         Parameters
@@ -409,10 +409,10 @@ class WriteOnlyWorkbook:
 
         Returns
         -------
-        WriteOnlyWorksheet
+        XIOWorksheet
             The worksheet at the specified index.
         """
-    def get_by_name(self, name: str) -> WriteOnlyWorksheet:
+    def get_by_name(self, name: str) -> XIOWorksheet:
         """Get a worksheet by its name.
 
         Parameters
@@ -422,10 +422,10 @@ class WriteOnlyWorkbook:
 
         Returns
         -------
-        WriteOnlyWorksheet
+        XIOWorksheet
             The worksheet with the specified name.
         """
-    def get(self, idx_or_name: int | str) -> WriteOnlyWorksheet:
+    def get(self, idx_or_name: int | str) -> XIOWorksheet:
         """Get a worksheet by its index or name.
 
         Parameters
@@ -435,7 +435,7 @@ class WriteOnlyWorkbook:
 
         Returns
         -------
-        WriteOnlyWorksheet
+        XIOWorksheet
             The worksheet at the specified index or with the specified name.
         """
 
@@ -562,36 +562,6 @@ def read_many(
             },
             "workbook2.xlsx": {0: {"scalar_1": "Some string"}},
         }
-    """
-
-def write_many(
-    workbooks_to_write: dict[str, list[WriteOnlyWorksheet]],
-) -> None:
-    """Write multiple workbooks to disk.
-
-    This function writes multiple workbooks to their respective file paths. Each workbook is
-    represented by a list of `WriteOnlyWorksheet` objects, which contain the data to be written.
-
-    Parameters
-    ----------
-    workbooks_to_write : dict[str, list[WriteOnlyWorksheet]]
-        A dictionary mapping workbook file paths to lists of `WriteOnlyWorksheet` objects.
-        Each `WriteOnlyWorksheet` object represents a worksheet containing data to be written.
-
-    Examples
-    --------
-    >>> from fastxlsxio import DType, WriteOnlyWorksheet, write_many
-    >>> workbooks_to_write = {}
-    >>> for i_workbook in range(10):
-            ws_list = []
-            for i_sheet in range(6):
-                ws = WriteOnlyWorksheet(f"Sheet{i_sheet}")
-                ws.write_cell("A1", 10 * i_workbook + i_sheet, dtype=DType.Int)
-                ws.write_matrix((1, 1), np.random.random((3, 3)), dtype=DType.Float)
-                ws_list.append(ws)
-            workbooks_to_write[f"workboopk_{i_workbook}.xlsx"] = ws_list
-    >>> write_many(workbooks_to_write)
-
     """
 
 def idx_to_addr(row: int, col: int) -> str:
