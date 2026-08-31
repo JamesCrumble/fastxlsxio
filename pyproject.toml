@@ -1,0 +1,40 @@
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "fastxlsxio"
+requires-python = ">=3.10,<3.15"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+dynamic = ["version"]
+dependencies = ["numpy"]
+
+authors = [{ name = "JamesCrumble", email = "namster222333@gmail.com" }]
+maintainers = [{ name = "JamesCrumble", email = "namster222333@gmail.com" }]
+description = "A high-performance Excel XLSX reader/writer for Python built with Rust."
+readme = "README.md"
+license = "Apache License"
+keywords = ["excel", "xlsx"]
+
+[project.urls]
+Homepage = "https://github.com/JamesCrumble/fastxlsxio"
+Repository = "https://github.com/JamesCrumble/fastxlsxio"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+
+[project.optional-dependencies]
+bench = [
+    "pytest",
+    "pytest-benchmark",
+    "openpyxl",
+    "xlsxwriter",
+    "pyexcelerate",
+    "python-calamine",
+    "pylightxl",
+]
+dev = ["pytest", "ruff>=0.8.4"]
