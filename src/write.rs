@@ -89,8 +89,8 @@ impl XIOWorksheet {
         unsafe { &mut *self.worksheet }
     }
 
-    pub fn internal_new(worksheet: &mut Worksheet, title: String, is_constant_memory: bool) -> Self {
-        let _ = worksheet.set_name(title);
+    pub fn internal_new(worksheet: &mut Worksheet, name: String, is_constant_memory: bool) -> Self {
+        let _ = worksheet.set_name(name);
         Self {
             worksheet: worksheet as *mut Worksheet, is_constant_memory: is_constant_memory
         }
@@ -342,7 +342,8 @@ impl XIOWorkbook {
         }
     }
 
-    fn add_worksheet(&mut self, py: Python<'_>, title: String, constant_memory: bool) -> PyResult<Py<XIOWorksheet>> {
+    #[pyo3(signature = (name, constant_memory = false))]
+    fn add_worksheet(&mut self, py: Python<'_>, name: String, constant_memory: bool) -> PyResult<Py<XIOWorksheet>> {
         let worksheet;
         if constant_memory {
             worksheet = self.workbook.add_worksheet_with_constant_memory();
@@ -350,15 +351,15 @@ impl XIOWorkbook {
             worksheet = self.workbook.add_worksheet();
         }
 
-        let sheet_inst = XIOWorksheet::internal_new(worksheet, title.clone(), constant_memory);
+        let sheet_inst = XIOWorksheet::internal_new(worksheet, name.clone(), constant_memory);
         let py_worksheet = Py::new(
             py,
             sheet_inst
         ).unwrap();
         self.worksheets.push(py_worksheet);
         self.worksheets.last().map(|ws| ws.clone_ref(py)).ok_or(PyValueError::new_err(format!(
-            "Cannot create worksheet with title \"{}\". ",
-            title,
+            "Cannot create worksheet with name \"{}\". ",
+            name,
         )))
     }
 
