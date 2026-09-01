@@ -26,6 +26,8 @@ Repository = "https://github.com/JamesCrumble/fastxlsxio"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
+python-source = "python"
+module-name = "fastxlsxio.fastxlsxio"
 
 [profile.release]
 opt-level = 3       # Maximum optimization level (default for release)
@@ -43,3 +45,11 @@ bench = [
     "pylightxl",
 ]
 dev = ["pytest", "ruff>=0.8.4"]
+
+[dependency-groups]
+dev = [
+    "xlsxwriter (>=3.2.9,<4.0.0)"
+]
+
+[tool.poetry]
+package-mode = false

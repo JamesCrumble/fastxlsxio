@@ -2,6 +2,7 @@ pub mod conversations;
 pub mod fromcell;
 pub mod read;
 pub mod types;
+pub mod pyconv;
 #[macro_use]
 pub mod utils;
 pub mod write;
@@ -61,7 +62,6 @@ fn fastxlsxio(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<write::XIOWorkbook>()?;
     m.add_class::<write::XIOWorksheet>()?;
     m.add_function(wrap_pyfunction!(read::read_many, m)?)?;
-    // m.add_function(wrap_pyfunction!(write::write_many, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
     m.add_function(wrap_pyfunction!(addr_to_idx, m)?)?;
     m.add_function(wrap_pyfunction!(idx_to_addr, m)?)?;
