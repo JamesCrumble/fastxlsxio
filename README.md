@@ -3,6 +3,7 @@
 [Originally written from](https://github.com/shuangluoxss/fastxlsx)
 
 **A lightweight, high-performance Python library for fast XLSX I/O operations.**  
+*The project aims to create a write operation in xlsx that has the same functionality as Python’s xlsxwriter but faster, while keeping the reading implementation as it is from fastxlsx project.*
 
 ### 🚫 Current Limitations
 
