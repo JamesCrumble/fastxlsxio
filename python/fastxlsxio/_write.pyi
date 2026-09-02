@@ -1,6 +1,10 @@
 from collections.abc import Iterable
 from typing import Any
 
+class XIOFormat:
+    @staticmethod
+    def from_properties(properties: dict[str, Any]) -> XIOFormat: ...
+
 class XIOWorksheet:
     """xlsxwriter worksheet-like class"""
 
@@ -17,7 +21,7 @@ class XIOWorksheet:
     def name(self) -> str: ...
     @property
     def constant_memory(self) -> bool: ...
-    def write_cell(self, row: int, col: int, value: Any) -> None:
+    def write_cell(self, row: int, col: int, value: Any, format: XIOFormat | None = None) -> None:
         """Write a value to a specific cell in the worksheet.
 
         Parameters
@@ -28,9 +32,11 @@ class XIOWorksheet:
             0-based column index.
         value : Any
             The value to write to the cell.
+        format : XIOFormat | None = None
+            values format.
         """
 
-    def write_row(self, row: int, col: int, value: Iterable[Any]) -> None:
+    def write_row(self, row: int, col: int, value: Iterable[Any], formats: list[XIOFormat] | None = None) -> None:
         """Write a row of values starting from a specific cell.
 
         Parameters
@@ -41,9 +47,11 @@ class XIOWorksheet:
             0-based starting column index.
         value : Iterable[Any]
             The 1D iterable of cell values to write.
+        format : list[XIOFormat] | None = None
+            values format.
         """
 
-    def write_rows(self, row: int, col: int, value: Iterable[Iterable[Any]]) -> None:
+    def write_rows(self, row: int, col: int, value: Iterable[Iterable[Any]], formats: list[XIOFormat] | None = None) -> None:
         """Write multiple rows of values starting from a specific cell.
 
         Parameters
@@ -54,22 +62,11 @@ class XIOWorksheet:
             0-based starting column index.
         value : Iterable[Iterable[Any]]
             The 2D iterable of row values to write.
+        format : list[XIOFormat] | None = None
+            values format.
         """
 
-    def write_batched_rows(self, row: int, col: int, value: Iterable[Iterable[Any]]) -> None:
-        """Write a batch of rows sequentially starting from a specific cell.
-
-        Parameters
-        ----------
-        row : int
-            0-based starting row index.
-        col : int
-            0-based starting column index.
-        value : Iterable[Iterable[Any]]
-            The 2D iterable of row values to write. Fully compatible with constant_memory.
-        """
-
-    def write_column(self, row: int, col: int, value: Iterable[Any]) -> None:
+    def write_column(self, row: int, col: int, value: Iterable[Any], format: XIOFormat | None = None) -> None:
         """Write a column of values starting from a specific cell.
 
         Parameters
@@ -80,6 +77,8 @@ class XIOWorksheet:
             0-based column index.
         value : Iterable[Any]
             The 1D iterable of column values to write.
+        format : XIOFormat | None = None
+            values format.
         """
 
     def write_matrix(self, row: int, col: int, value: Iterable[Iterable[Any]]) -> None:
@@ -114,15 +113,27 @@ class XIOWorkbook:
         XIOWorksheet
             The newly created worksheet.
         """
+    def add_format(self, properties: dict[str, Any]) -> XIOFormat:
+        """Adds format to workbook
 
+        Parameters
+        ----------
+        properties : dict[str, Any]
+            "num_format" : str
+                format for numbers
+            "bold" : bool
+                set or unset bold to text. By default is False so True is only logical value here
+
+        Returns
+        -------
+        XIOFormat
+            The format class to use in XIOWorksheet.write_... methods
+        """
     def get_by_idx(self, idx: int) -> XIOWorksheet:
         """Get a worksheet by its 0-based index."""
 
     def get_by_name(self, name: str) -> XIOWorksheet:
         """Get a worksheet by its name."""
-
-    def get(self, idx_or_name: int | str) -> XIOWorksheet:
-        """Get a worksheet by its index or name."""
 
     def save(self, path: str) -> None:
         """Save the workbook to the specified file path."""

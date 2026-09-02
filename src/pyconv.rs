@@ -1,20 +1,22 @@
 use std::fmt::{Write};
 use pyo3::exceptions::{PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDate, PyDateAccess, PyDateTime, PyFloat, PyInt, PyTime, PyTimeAccess};
+use pyo3::types::{PyBool, PyDate, PyDateAccess, PyDateTime, PyFloat, PyInt, PySequence, PyTime, PyTimeAccess};
 use rust_xlsxwriter::{ExcelDateTime};
 
-fn round3(val: f64) -> f64 {
+pub type XlsxInt = i32;
+pub type XlsxFloat = f64;
+
+fn round3(val: XlsxFloat) -> XlsxFloat {
     (val * 1000.0).round() / 1000.0
 }
 
-pub fn pydecimal_xlsx_format<'py>(value: &Bound<'py, PyAny>) -> Result<f64, PyErr> {
-    let val: f64 = value.call_method0("__float__")?.extract()?;
+pub fn pydecimal_xlsx_format<'py>(value: &Bound<'py, PyAny>) -> Result<XlsxFloat, PyErr> {
+    let val: XlsxFloat = value.call_method0("__float__")?.extract()?;
     Ok(val)
 }
 
-pub fn pytime_xlsx_format<'py>(value: &Bound<'py, PyAny>) -> Result<ExcelDateTime, PyErr> {
-    let t = value.downcast::<PyTime>()?;
+pub fn pytime_xlsx_format<'py>(t: &Bound<'py, PyTime>) -> Result<ExcelDateTime, PyErr> {
     ExcelDateTime::from_hms(
         t.get_hour() as u16,
         t.get_minute() as u8,
@@ -23,8 +25,7 @@ pub fn pytime_xlsx_format<'py>(value: &Bound<'py, PyAny>) -> Result<ExcelDateTim
     .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
-pub fn pydate_xlsx_format<'py>(value: &Bound<'py, PyAny>) -> Result<ExcelDateTime, PyErr> {
-    let d = value.downcast::<PyDate>()?;
+pub fn pydate_xlsx_format<'py>(d: &Bound<'py, PyDate>) -> Result<ExcelDateTime, PyErr> {
     ExcelDateTime::from_ymd(
         d.get_year() as u16,
         d.get_month() as u8,
@@ -33,8 +34,7 @@ pub fn pydate_xlsx_format<'py>(value: &Bound<'py, PyAny>) -> Result<ExcelDateTim
     .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
-pub fn pydatetime_xlsx_format<'py>(value: &Bound<'py, PyAny>) -> Result<ExcelDateTime, PyErr> {
-    let dt = value.downcast::<PyDateTime>()?;
+pub fn pydatetime_xlsx_format<'py>(dt: &Bound<'py, PyDateTime>) -> Result<ExcelDateTime, PyErr> {
     ExcelDateTime::from_ymd(
         dt.get_year() as u16,
         dt.get_month() as u8,
@@ -49,33 +49,31 @@ pub fn pydatetime_xlsx_format<'py>(value: &Bound<'py, PyAny>) -> Result<ExcelDat
     .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
-pub fn pybool_xlsx_format<'py>(value: &Bound<'py, PyAny>) -> Result<&'py str, PyErr> {
-    Ok(if value.extract::<bool>()? { "Да" } else { "Нет" })
+pub fn pybool_xlsx_format<'py>(b: &Bound<'py, PyBool>) -> Result<&'py str, PyErr> {
+    Ok(if b.is_true() { "Да" } else { "Нет" })
 }
 
-pub fn pyone_dimensional_iter_xlsx_format<'py>(value: &Bound<'py, PyAny>) -> Result<String, PyErr> {
+pub fn pyone_dimensional_iter_xlsx_format<'py>(seq: &Bound<'py, PySequence>) -> Result<String, PyErr> {
     let mut buffer = String::with_capacity(64);
-    let seq = value.try_iter().unwrap();
-    for (i, element) in seq.enumerate() {
-        let elem = element?;
+    for (i, v) in seq.try_iter()?.enumerate() {
+        let value = v?;
         if i > 0 {
             buffer.push_str(", ");
         }
 
-        if elem.is_none() {
+        if value.is_none() {
             continue;
-        } else if elem.is_instance_of::<PyBool>() {
-            buffer.push_str(pybool_xlsx_format(&elem)?);
-        } else if elem.is_instance_of::<PyFloat>() {
-            let f: f64 = elem.extract()?;
-            let _ = write!(buffer, "{}", round3(f));
-        } else if elem.is_instance_of::<PyInt>() {
-            let i: i64 = elem.extract()?;
+        } else if let Ok(b) = value.downcast::<PyBool>() {
+            buffer.push_str(pybool_xlsx_format(&b)?);
+        } else if let Ok(f) = value.downcast::<PyFloat>() {
+            let _ = write!(buffer, "{}", round3(f.value()));
+        } else if let Ok(i) = value.downcast::<PyInt>() {
+            let i: XlsxInt = i.extract()?;
             let _ = write!(buffer, "{}", i);
-        } else if let Ok(s) = elem.extract::<&str>() {
+        } else if let Ok(s) = value.extract::<&str>() {
             buffer.push_str(s);
         } else {
-            let s = elem.str()?;
+            let s = value.str()?;
             buffer.push_str(&s.to_string_lossy());
         }
     }
