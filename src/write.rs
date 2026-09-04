@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 use pyo3::exceptions::{PyFileExistsError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDate, PyDateTime, PyDict, PyFloat, PyInt, PyIterator, PyList, PySequence, PyString, PyTime};
-use rust_xlsxwriter::{Workbook, Worksheet, Format, ExcelDateTime};
+use rust_xlsxwriter::{Workbook, Worksheet, Format, ExcelDateTime, RowNum, ColNum};
 
 pub enum ExcelCell<'a> {
     String(Cow<'a, str>),
@@ -98,8 +98,8 @@ impl<'a> ExcelCell<'a> {
     pub fn write(
         &self,
         worksheet: &mut Worksheet,
-        row: u32,
-        col: u16,
+        row: RowNum,
+        col: ColNum,
         format: Option<&Format>,
     ) -> PyResult<()> {
         let res: Result<_, _> = match (self, format) {
@@ -129,8 +129,8 @@ impl<'a> ExcelCell<'a> {
 
 pub fn write_cell_direct<'py>(
     worksheet: &mut Worksheet,
-    row: u32,
-    col: u16,
+    row: RowNum,
+    col: ColNum,
     value: &Bound<'py, PyAny>,
     format: Option<&Bound<'py, XIOFormat>>,
 ) -> PyResult<()> {
@@ -252,8 +252,8 @@ impl XIOWorksheet {
     #[pyo3(signature = (row, col, value, format = None))]
     pub fn write_cell<'py>(
         &mut self,
-        row: u32,
-        col: u16,
+        row: RowNum,
+        col: ColNum,
         value: &Bound<'py, PyAny>,
         format: Option<&Bound<'py, XIOFormat>>,
     ) -> PyResult<()> {
@@ -263,8 +263,8 @@ impl XIOWorksheet {
     #[pyo3(signature = (row, col, value, formats = None))]
     pub fn write_row<'py>(
         &mut self,
-        row: u32,
-        col: u16,
+        row: RowNum,
+        col: ColNum,
         value: &Bound<'py, PyAny>,
         formats: Option<&Bound<'py, PyList>>,
     ) -> PyResult<()> {
@@ -281,12 +281,12 @@ impl XIOWorksheet {
                 for (offset, element) in iter.enumerate() {
                     let item = s.get_item(offset).map_err(|e|PyValueError::new_err(format!("List of formats should be same length as row itself. {}", e)))?;
                     let format_item = item.downcast::<XIOFormat>()?;
-                    self.write_cell(row, col + offset as u16, &element?, Some(format_item))?;
+                    self.write_cell(row, col + offset as ColNum, &element?, Some(format_item))?;
                 }
             }
             None => {
                 for (offset, element) in iter.enumerate() {
-                    self.write_cell(row, col + offset as u16, &element?, None)?;
+                    self.write_cell(row, col + offset as ColNum, &element?, None)?;
                 }
             }
         }
@@ -296,8 +296,8 @@ impl XIOWorksheet {
     #[pyo3(signature = (row, col, value, formats = None))]
     pub fn write_rows<'py>(
         &mut self,
-        row: u32,
-        col: u16,
+        row: RowNum,
+        col: ColNum,
         value: &Bound<'py, PySequence>,
         formats: Option<&Bound<'py, PyList>>,
     ) -> PyResult<()> {
@@ -325,11 +325,11 @@ impl XIOWorksheet {
 
         for (r_offset, row_obj_res) in full_rows_iter.enumerate() {
             let row_obj = row_obj_res?;
-            let current_row = row + r_offset as u32;
+            let current_row = row + r_offset as RowNum;
 
             for (c_offset, cell_obj_res) in row_obj.try_iter()?.enumerate() {
                 let cell_obj = cell_obj_res?;
-                let current_col = col + c_offset as u16;
+                let current_col = col + c_offset as ColNum;
 
                 let cell_format = rs_formats.get(c_offset).copied().flatten();
                 let hint = col_hints.get(c_offset).and_then(|h| h.as_ref());
@@ -349,8 +349,8 @@ impl XIOWorksheet {
     #[pyo3(signature = (row, col, value, format = None))]
     pub fn write_column<'py>(
         &mut self,
-        row: u32,
-        col: u16,
+        row: RowNum,
+        col: ColNum,
         value: &Bound<'py, PyAny>,
         format: Option<&Bound<'py, XIOFormat>>,
     ) -> PyResult<()> {
@@ -396,17 +396,43 @@ impl XIOWorksheet {
                 None => ExcelCell::from_py(&elem)?,
             };
 
-            cell.write(worksheet, row + offset as u32, col, None)?;
+            cell.write(worksheet, row + offset as RowNum, col, None)?;
         }
 
+        Ok(())
+    }
+
+    #[pyo3(signature = (first_row, first_col, last_row, last_col, value, format = None))]
+    pub fn merge_range<'py>(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+        value: &Bound<'py, PyAny>,
+        format: Option<&Bound<'py, XIOFormat>>,
+    ) -> PyResult<()> {
+        let py_str = value.str()?; 
+        let rust_str: &str = py_str.to_str()?;
+        let rs_format = match format {
+            Some(s) => {
+                &s.borrow().rs_format
+            }
+            None => {
+                &Format::default()
+            }
+        };
+        let res = self.worksheet_refmut().merge_range(first_row, first_col, last_row, last_col, rust_str, rs_format);
+
+        res.map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(())
     }
 
     #[pyo3(signature = (row, col, value))]
     pub fn write_matrix<'py>(
         &mut self,
-        row: u32,
-        col: u16,
+        row: RowNum,
+        col: ColNum,
         value: &Bound<'py, PyAny>,
     ) -> PyResult<()> {
         todo!();

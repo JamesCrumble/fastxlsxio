@@ -33,7 +33,26 @@ class XIOWorksheet:
         value : Any
             The value to write to the cell.
         format : XIOFormat | None = None
-            values format.
+            value format.
+        """
+
+    def merge_range(first_row: int, first_col: int, last_row: int, last_col: int, value: Any, format: XIOFormat | None = None) -> None:
+        """Merge a range of cells.
+
+        Parameters
+        ----------
+        first_row : int
+            The first row of the range. (All zero indexed.)
+        first_col : int
+            The first column of the range.
+        last_row : int
+            The last row of the range.
+        last_col : int
+            The last column of the range.
+        value : Any
+            The value to write to the cell.
+        format : XIOFormat | None = None
+            value format.
         """
 
     def write_row(self, row: int, col: int, value: Iterable[Any], formats: list[XIOFormat] | None = None) -> None:
