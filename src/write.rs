@@ -1,11 +1,14 @@
 use crate::pyconv::*;
 
 use std::borrow::Cow;
+use std::sync::LazyLock;
 
 use pyo3::exceptions::{PyFileExistsError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDate, PyDateTime, PyDict, PyFloat, PyInt, PyTuple, PyList, PySequence, PyString, PyTime};
 use rust_xlsxwriter::{Workbook, Worksheet, Format, ExcelDateTime, RowNum, ColNum};
+
+pub static DEFAULT_FORMAT: LazyLock<Format> = LazyLock::new(Format::default);
 
 pub enum ExcelCell<'a> {
     String(Cow<'a, str>),
@@ -46,6 +49,7 @@ impl<'a> ExcelCell<'a> {
         if elem.get_type().name()? == "Decimal" {
             return Ok(ExcelCell::Float(pydecimal_xlsx_format(elem)?));
         }
+        // TODO: support write sequences
 
         Err(PyValueError::new_err(format!(
             "Unsupported type for Excel export: {}",
@@ -102,23 +106,19 @@ impl<'a> ExcelCell<'a> {
         format: Option<&Format>,
     ) -> PyResult<()> {
         let res: Result<_, _> = match (self, format) {
-            (ExcelCell::String(s), Some(fmt)) => worksheet.write_string_with_format(row, col, s.as_ref(), fmt),
             (ExcelCell::String(s), None) => worksheet.write_string(row, col, s.as_ref()),
-
-            (ExcelCell::Int(n), Some(fmt)) => worksheet.write_number_with_format(row, col, *n, fmt),
+            (ExcelCell::Blank, None) => Ok(worksheet),
             (ExcelCell::Int(n), None) => worksheet.write_number(row, col, *n),
-
-            (ExcelCell::Float(n), Some(fmt)) => worksheet.write_number_with_format(row, col, *n, fmt),
             (ExcelCell::Float(n), None) => worksheet.write_number(row, col, *n),
-
-            (ExcelCell::Bool(b), Some(fmt)) => worksheet.write_boolean_with_format(row, col, *b, fmt),
             (ExcelCell::Bool(b), None) => worksheet.write_boolean(row, col, *b),
-
-            (ExcelCell::DateTime(dt), Some(fmt)) => worksheet.write_datetime_with_format(row, col, dt, fmt),
             (ExcelCell::DateTime(dt), None) => worksheet.write_datetime(row, col, dt),
 
+            (ExcelCell::String(s), Some(fmt)) => worksheet.write_string_with_format(row, col, s.as_ref(), fmt),
             (ExcelCell::Blank, Some(fmt)) => worksheet.write_blank(row, col, fmt),
-            (ExcelCell::Blank, None) => Ok(worksheet),
+            (ExcelCell::Int(n), Some(fmt)) => worksheet.write_number_with_format(row, col, *n, fmt),
+            (ExcelCell::Float(n), Some(fmt)) => worksheet.write_number_with_format(row, col, *n, fmt),
+            (ExcelCell::Bool(b), Some(fmt)) => worksheet.write_boolean_with_format(row, col, *b, fmt),
+            (ExcelCell::DateTime(dt), Some(fmt)) => worksheet.write_datetime_with_format(row, col, dt, fmt),
         };
 
         res.map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -137,6 +137,43 @@ impl XIOFormat {
             rs_format: rs_format,
         }
     }
+}
+
+macro_rules! unpack_format {
+    ($format:expr, $rs_format:ident) => {
+        let _guard = $format.map(|f| f.borrow());
+        let $rs_format = _guard.as_deref().map(|f| &f.rs_format);
+    };
+}
+
+macro_rules! unpack_formats {
+    ($formats:expr, $rs_formats:ident) => {
+        let _guards = match $formats {
+            Some(list) => {
+                let mut vec = Vec::with_capacity(list.len());
+                for item in list.iter() {
+                    if item.is_none() {
+                        vec.push(None);
+                    } else {
+                        vec.push(Some(item.downcast::<XIOFormat>()?.borrow()));
+                    }
+                }
+                vec
+            }
+            None => Vec::new(),
+        };
+
+        let $rs_formats: Vec<Option<&Format>> = _guards
+            .iter()
+            .map(|g| g.as_deref().map(|f| &f.rs_format))
+            .collect();
+    };
+}
+
+macro_rules! extract_format_by_offset {
+    ($rs_formats:expr, $offset:expr, $rs_format:ident) => {
+        let $rs_format = $rs_formats.get($offset).copied().flatten();
+    };
 }
 
 #[pymethods]
@@ -188,30 +225,25 @@ impl XIOWorksheet {
         unsafe { &mut *self.worksheet }
     }
 
-    /// Strict parser: accepts PyList containing XIOFormat objects or None.
-    /// Raises PyTypeError immediately if any non-None item fails to downcast to XIOFormat.
-    fn parse_column_formats<'py>(&self, formats: Option<&Bound<'py, PyList>>) -> PyResult<Vec<Option<PyRef<'py, XIOFormat>>>> {
-        let Some(list) = formats else {
-            return Ok(Vec::new());
-        };
-
-        list.iter()
-            .map(|item| {
-                if item.is_none() {
-                    Ok(None)
-                } else {
-                    Ok(Some(item.downcast::<XIOFormat>()?.borrow()))
-                }
-            })
-            .collect()
+    fn _write_cell_rs(
+        &self,
+        row: RowNum,
+        col: ColNum,
+        cell: ExcelCell,
+        format: Option<&Format>,
+    ) -> PyResult<()> {
+        cell.write(self.worksheet_refmut(), row, col, format)
     }
 
-    /// Map borrow guards to raw &Format references (supports None slots)
-    fn extract_rs_format<'a>(&self, guards: &'a [Option<PyRef<'_, XIOFormat>>]) -> Vec<Option<&'a Format>> {
-        guards
-            .iter()
-            .map(|g| g.as_ref().map(|f| &f.rs_format))
-            .collect()
+    fn _write_cell(
+        &self,
+        row: RowNum,
+        col: ColNum,
+        cell: ExcelCell,
+        format: Option<&Bound<'_, XIOFormat>>,
+    ) -> PyResult<()> {
+        unpack_format!(format, rs_format);
+        self._write_cell_rs(row, col, cell, rs_format)
     }
 
     pub fn internal_new(worksheet: &mut Worksheet, name: String, is_constant_memory: bool) -> Self {
@@ -221,6 +253,7 @@ impl XIOWorksheet {
         }
     }
 }
+
 #[pymethods]
 impl XIOWorksheet {
     
@@ -242,12 +275,7 @@ impl XIOWorksheet {
         value: &Bound<'py, PyAny>,
         format: Option<&Bound<'py, XIOFormat>>,
     ) -> PyResult<()> {
-        let worksheet = self.worksheet_refmut();
-        let format_guard = format.map(|f| f.borrow());
-        let rs_format = format_guard.as_ref().map(|g| &g.rs_format);
-        
-        let cell = ExcelCell::from_py(value)?;
-        cell.write(worksheet, row, col, rs_format)
+        self._write_cell(row, col, ExcelCell::from_py(value)?, format)
     }
 
     #[pyo3(signature = (row, col, value, formats = None))]
@@ -258,15 +286,13 @@ impl XIOWorksheet {
         value: &Bound<'py, PyAny>,
         formats: Option<&Bound<'py, PyList>>,
     ) -> PyResult<()> {
-        let worksheet = self.worksheet_refmut();
-        let format_guards = self.parse_column_formats(formats)?;
-        let rs_formats = self.extract_rs_format(&format_guards);
+        unpack_formats!(formats, rs_formats);
 
         // PyList directly
         if let Ok(list) = value.downcast::<PyList>() {
             for (offset, item) in list.iter().enumerate() {
-                let cell_format = rs_formats.get(offset).copied().flatten();
-                ExcelCell::from_py(&item)?.write(worksheet, row, col + offset as ColNum, cell_format)?;
+                extract_format_by_offset!(rs_formats, offset, rs_format);
+                self._write_cell_rs(row, col + offset as ColNum, ExcelCell::from_py(&item)?, rs_format)?;
             }
             return Ok(());
         }
@@ -274,8 +300,8 @@ impl XIOWorksheet {
         // PyTuple directly
         if let Ok(tuple) = value.downcast::<PyTuple>() {
             for (offset, item) in tuple.iter().enumerate() {
-                let cell_format = rs_formats.get(offset).copied().flatten();
-                ExcelCell::from_py(&item)?.write(worksheet, row, col + offset as ColNum, cell_format)?;
+                extract_format_by_offset!(rs_formats, offset, rs_format);
+                self._write_cell_rs(row, col + offset as ColNum, ExcelCell::from_py(&item)?, rs_format)?;
             }
             return Ok(());
         }
@@ -289,8 +315,8 @@ impl XIOWorksheet {
         })?;
 
         for (offset, item) in iter_result.enumerate() {
-            let cell_format = rs_formats.get(offset).copied().flatten();
-            ExcelCell::from_py(&item.unwrap())?.write(worksheet, row, col + offset as ColNum, cell_format)?;
+            extract_format_by_offset!(rs_formats, offset, rs_format);
+            self._write_cell_rs(row, col + offset as ColNum, ExcelCell::from_py(&item.unwrap())?, rs_format)?;
         }
 
         Ok(())
@@ -304,15 +330,13 @@ impl XIOWorksheet {
         value: &Bound<'py, PySequence>,
         formats: Option<&Bound<'py, PyList>>,
     ) -> PyResult<()> {
-        let format_guards = self.parse_column_formats(formats)?;
-        let rs_formats = self.extract_rs_format(&format_guards);
         
         let mut rows_iter = value.try_iter()?;
         let Some(first_row_res) = rows_iter.next() else {
             return Ok(());
         };
         let first_row_obj = first_row_res?;
-
+        
         // Collect first row only to evaluate column count and hints
         let first_row: Vec<Bound<'py, PyAny>> = first_row_obj
             .try_iter()?
@@ -322,8 +346,8 @@ impl XIOWorksheet {
             .iter()
             .map(|cell| ExcelCell::from_py(cell).ok())
             .collect();
-
-        let worksheet = self.worksheet_refmut();
+    
+        unpack_formats!(formats, rs_formats);
         let full_rows_iter = std::iter::once(Ok(first_row_obj)).chain(rows_iter);
 
         for (r_offset, row_obj_res) in full_rows_iter.enumerate() {
@@ -334,15 +358,14 @@ impl XIOWorksheet {
                 let cell_obj = cell_obj_res?;
                 let current_col = col + c_offset as ColNum;
 
-                let cell_format = rs_formats.get(c_offset).copied().flatten();
+                extract_format_by_offset!(rs_formats, c_offset, rs_format);
                 let hint = col_hints.get(c_offset).and_then(|h| h.as_ref());
 
                 let cell = match hint {
                     Some(h) => ExcelCell::from_py_speculative(&cell_obj, h)?,
                     None => ExcelCell::from_py(&cell_obj)?,
                 };
-
-                cell.write(worksheet, current_row, current_col, cell_format)?;
+                self._write_cell_rs(current_row, current_col, cell, rs_format)?;
             }
         }
 
@@ -383,9 +406,7 @@ impl XIOWorksheet {
             None
         };
 
-        let worksheet = self.worksheet_refmut();
         let full_iter = std::iter::once(Ok(first_elem.clone())).chain(iter);
-
         for (offset, elem_res) in full_iter.enumerate() {
             let elem = elem_res?;
             if elem.is_none() {
@@ -397,7 +418,7 @@ impl XIOWorksheet {
                 None => ExcelCell::from_py(&elem)?,
             };
 
-            cell.write(worksheet, row + offset as RowNum, col, None)?;
+            self._write_cell_rs(row + offset as RowNum, col, cell, None)?;
         }
 
         Ok(())
@@ -414,20 +435,14 @@ impl XIOWorksheet {
         value: &Bound<'py, PyAny>,
         format: Option<&Bound<'py, XIOFormat>>,
     ) -> PyResult<()> {
-        let py_str = value.str()?; 
-        let rust_str: &str = py_str.to_str()?;
-        let rs_format = match format {
-            Some(s) => {
-                &s.borrow().rs_format
-            }
-            None => {
-                &Format::default()
-            }
-        };
+        unpack_format!(format, rs_format);
         let worksheet = self.worksheet_refmut();
 
+        let py_str = value.str()?; 
+        let rust_str: &str = py_str.to_str()?;
+
         py.allow_threads(|| {
-            worksheet.merge_range(first_row, first_col, last_row, last_col, rust_str, rs_format)
+            worksheet.merge_range(first_row, first_col, last_row, last_col, rust_str, rs_format.unwrap_or(&DEFAULT_FORMAT))
         })
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
@@ -451,6 +466,7 @@ impl XIOWorksheet {
 
 #[pyclass]
 pub struct XIOWorkbook {
+    filepath: Option<String>,
     workbook: Workbook,
     worksheets: Vec<XIOWorksheet>,
 }
@@ -466,9 +482,12 @@ impl XIOWorkbook {
 
 #[pymethods]
 impl XIOWorkbook {
+
     #[new]
-    fn new() -> Self {
+    #[pyo3(signature = (filepath = None))]
+    fn new(filepath: Option<String>) -> Self {
         Self {
+            filepath: filepath,
             workbook: Workbook::new(),
             worksheets: Vec::new()
         }
@@ -491,14 +510,24 @@ impl XIOWorkbook {
             .set_name(&name)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-        // Создаем Rust-структуру XIOWorksheet
         let sheet = XIOWorksheet::internal_new(worksheet, name, constant_memory);
-
-        // Сохраняем копию в Rust-векторе (это не увеличивает Py_REFCNT в Python!)
         self.worksheets.push(sheet.clone());
 
-        // Возвращаем экземпляр в Python
         Ok(sheet)
+    }
+
+    #[pyo3(signature = (filepath = None))]
+    fn save(&mut self, py: Python<'_>, filepath: Option<String>) -> PyResult<()> {
+        if filepath.is_none() && self.filepath.is_none() {
+            return Err(PyValueError::new_err("Expected provided path or inited filepath. Got nothing."));
+        }
+
+        let path;
+        match filepath {
+            Some(p) => {path = p}
+            None => {path = self.filepath.clone().unwrap()}
+        }
+        py.allow_threads(|| {self.workbook.save(path)}).map_err(|e| PyFileExistsError::new_err(e.to_string()))
     }
 
     fn get_by_idx(&mut self, idx: usize) -> PyResult<XIOWorksheet> {
@@ -526,10 +555,6 @@ impl XIOWorkbook {
             .iter()
             .map(|ws| ws.name())
             .collect()
-    }
-
-    fn save(&mut self, py: Python<'_>, path: String) -> PyResult<()> {
-        py.allow_threads(|| {self.workbook.save(path)}).map_err(|e| PyFileExistsError::new_err(e.to_string()))
     }
 
     fn __repr__(&mut self) -> String {
