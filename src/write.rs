@@ -1,11 +1,10 @@
 use crate::pyconv::*;
 
 use std::borrow::Cow;
-use std::sync::LazyLock;
 
 use pyo3::exceptions::{PyFileExistsError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDate, PyDateTime, PyDict, PyFloat, PyInt, PyIterator, PyList, PySequence, PyString, PyTime};
+use pyo3::types::{PyBool, PyDate, PyDateTime, PyDict, PyFloat, PyInt, PyTuple, PyList, PySequence, PyString, PyTime};
 use rust_xlsxwriter::{Workbook, Worksheet, Format, ExcelDateTime, RowNum, ColNum};
 
 pub enum ExcelCell<'a> {
@@ -127,20 +126,6 @@ impl<'a> ExcelCell<'a> {
     }
 }
 
-pub fn write_cell_direct<'py>(
-    worksheet: &mut Worksheet,
-    row: RowNum,
-    col: ColNum,
-    value: &Bound<'py, PyAny>,
-    format: Option<&Bound<'py, XIOFormat>>,
-) -> PyResult<()> {
-    let format_guard = format.map(|f| f.borrow());
-    let rs_format = format_guard.as_ref().map(|g| &g.rs_format);
-    
-    let cell = ExcelCell::from_py(value)?;
-    cell.write(worksheet, row, col, rs_format)
-}
-
 #[pyclass]
 pub struct XIOFormat {
     rs_format: Format
@@ -257,7 +242,12 @@ impl XIOWorksheet {
         value: &Bound<'py, PyAny>,
         format: Option<&Bound<'py, XIOFormat>>,
     ) -> PyResult<()> {
-        write_cell_direct(self.worksheet_refmut(), row, col, value, format)
+        let worksheet = self.worksheet_refmut();
+        let format_guard = format.map(|f| f.borrow());
+        let rs_format = format_guard.as_ref().map(|g| &g.rs_format);
+        
+        let cell = ExcelCell::from_py(value)?;
+        cell.write(worksheet, row, col, rs_format)
     }
 
     #[pyo3(signature = (row, col, value, formats = None))]
@@ -268,28 +258,41 @@ impl XIOWorksheet {
         value: &Bound<'py, PyAny>,
         formats: Option<&Bound<'py, PyList>>,
     ) -> PyResult<()> {
-        let iter_result: Result<Bound<'py, PyIterator>, PyErr>;
-        if let Ok(dict) = value.downcast::<PyDict>() {
-            iter_result = dict.values().into_any().try_iter()
-        } else {
-            iter_result = value.try_iter();
-        }
-        let iter = iter_result.map_err(|e| PyValueError::new_err(format!("Cannot write row from invalid object. {}", e)))?;
+        let worksheet = self.worksheet_refmut();
+        let format_guards = self.parse_column_formats(formats)?;
+        let rs_formats = self.extract_rs_format(&format_guards);
 
-        match formats {
-            Some(s) => {
-                for (offset, element) in iter.enumerate() {
-                    let item = s.get_item(offset).map_err(|e|PyValueError::new_err(format!("List of formats should be same length as row itself. {}", e)))?;
-                    let format_item = item.downcast::<XIOFormat>()?;
-                    self.write_cell(row, col + offset as ColNum, &element?, Some(format_item))?;
-                }
+        // PyList directly
+        if let Ok(list) = value.downcast::<PyList>() {
+            for (offset, item) in list.iter().enumerate() {
+                let cell_format = rs_formats.get(offset).copied().flatten();
+                ExcelCell::from_py(&item)?.write(worksheet, row, col + offset as ColNum, cell_format)?;
             }
-            None => {
-                for (offset, element) in iter.enumerate() {
-                    self.write_cell(row, col + offset as ColNum, &element?, None)?;
-                }
-            }
+            return Ok(());
         }
+
+        // PyTuple directly
+        if let Ok(tuple) = value.downcast::<PyTuple>() {
+            for (offset, item) in tuple.iter().enumerate() {
+                let cell_format = rs_formats.get(offset).copied().flatten();
+                ExcelCell::from_py(&item)?.write(worksheet, row, col + offset as ColNum, cell_format)?;
+            }
+            return Ok(());
+        }
+
+        let iter_result= if let Ok(dict) = value.downcast::<PyDict>() {
+            dict.values().try_iter()
+        } else {
+            value.try_iter()
+        }.map_err(|e| {
+            PyValueError::new_err(format!("Cannot write row from invalid object: {}", e))
+        })?;
+
+        for (offset, item) in iter_result.enumerate() {
+            let cell_format = rs_formats.get(offset).copied().flatten();
+            ExcelCell::from_py(&item.unwrap())?.write(worksheet, row, col + offset as ColNum, cell_format)?;
+        }
+
         Ok(())
     }
 
@@ -369,7 +372,6 @@ impl XIOWorksheet {
             PyValueError::new_err(format!("Cannot write column from invalid object: {}", e))
         })?;
 
-        // Извлекаем первый элемент для спекуляции без полной сборки вектора
         let Some(first_elem_res) = iter.next() else {
             return Ok(());
         };
@@ -384,7 +386,6 @@ impl XIOWorksheet {
         let worksheet = self.worksheet_refmut();
         let full_iter = std::iter::once(Ok(first_elem.clone())).chain(iter);
 
-        // Стриминговая запись элемента за элементом
         for (offset, elem_res) in full_iter.enumerate() {
             let elem = elem_res?;
             if elem.is_none() {
@@ -405,6 +406,7 @@ impl XIOWorksheet {
     #[pyo3(signature = (first_row, first_col, last_row, last_col, value, format = None))]
     pub fn merge_range<'py>(
         &mut self,
+        py: Python<'py>,
         first_row: RowNum,
         first_col: ColNum,
         last_row: RowNum,
@@ -422,9 +424,13 @@ impl XIOWorksheet {
                 &Format::default()
             }
         };
-        let res = self.worksheet_refmut().merge_range(first_row, first_col, last_row, last_col, rust_str, rs_format);
+        let worksheet = self.worksheet_refmut();
 
-        res.map_err(|e| PyValueError::new_err(e.to_string()))?;
+        py.allow_threads(|| {
+            worksheet.merge_range(first_row, first_col, last_row, last_col, rust_str, rs_format)
+        })
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
         Ok(())
     }
 
@@ -522,8 +528,8 @@ impl XIOWorkbook {
             .collect()
     }
 
-    fn save(&mut self, path: String) -> PyResult<()> {
-        self.workbook.save(path).map_err(|e| PyFileExistsError::new_err(e.to_string()))
+    fn save(&mut self, py: Python<'_>, path: String) -> PyResult<()> {
+        py.allow_threads(|| {self.workbook.save(path)}).map_err(|e| PyFileExistsError::new_err(e.to_string()))
     }
 
     fn __repr__(&mut self) -> String {

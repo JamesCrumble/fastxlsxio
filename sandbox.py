@@ -35,16 +35,16 @@ def fastxlsxio_build(xlsx: str):
         acc: int = 0
         for batch in data:
             for row in batch:
-                # sheet.write_row(acc, 0, row, [])
-                for j, value in enumerate(row.values()):
-                    sheet.write_cell(acc, j, value, format_)
+                sheet.write_row(acc, 0, row)
+                # for j, value in enumerate(row.values()):
+                #     sheet.write_cell(acc, j, value, format_)
                 acc += 1
-
-        rows_written += acc
 
         # for i, batch in enumerate(data):
         #     sheet.write_rows(i * len(batch), 0, batch)
         #     rows_written += len(batch)
+
+        rows_written += acc
 
         print(f"fastxlsxio {sheet.name} sheet {NUM_ROWS}x{NUM_COLS} rows written for {time.monotonic() - st:.2f}")
     print(f"fastxlsxio {rows_written}x{NUM_COLS} rows written")
