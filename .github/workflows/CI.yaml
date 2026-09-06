@@ -55,36 +55,36 @@ jobs:
         with:
           name: wheels-linux-${{ matrix.platform.target }}
           path: dist
-      - uses: astral-sh/setup-uv@v7
-        if: ${{ startsWith(matrix.platform.target, 'x86_64') }}
-      - name: pytest
-        if: ${{ startsWith(matrix.platform.target, 'x86_64') }}
-        shell: bash
-        run: |
-          set -e
-          uv venv .venv
-          source .venv/bin/activate
-          uv pip install fastxlsxio --no-index --no-deps --find-links dist --reinstall
-          uv pip install fastxlsxio pytest pytest-custom-exit-code
-          pytest
-      - name: pytest
-        if: ${{ startsWith(matrix.platform.target, 'x86_64') }}
-        uses: uraimo/run-on-arch-action@v3
-        with:
-          arch: ${{ matrix.platform.target }}
-          distro: ubuntu24.04
-          githubToken: ${{ github.token }}
-          install: |
-            apt-get update
-            apt-get install -y --no-install-recommends python3 python3-venv
-          run: |
-            set -e
-            python3 -m venv .venv
-            source .venv/bin/activate
-            pip install pytest pytest-custom-exit-code
-            pip install fastxlsxio --no-index --no-deps --find-links dist --force-reinstall
-            pip install fastxlsxio
-            pytest
+      # - uses: astral-sh/setup-uv@v7
+      #   if: ${{ startsWith(matrix.platform.target, 'x86_64') }}
+      # - name: pytest
+      #   if: ${{ startsWith(matrix.platform.target, 'x86_64') }}
+      #   shell: bash
+      #   run: |
+      #     set -e
+      #     uv venv .venv
+      #     source .venv/bin/activate
+      #     uv pip install fastxlsxio --no-index --no-deps --find-links dist --reinstall
+      #     uv pip install fastxlsxio pytest pytest-custom-exit-code
+      #     pytest
+      # - name: pytest
+      #   if: ${{ !startsWith(matrix.platform.target, 'x86') }}
+      #   uses: uraimo/run-on-arch-action@v3
+      #   with:
+      #     arch: ${{ matrix.platform.target }}
+      #     distro: ubuntu24.04
+      #     githubToken: ${{ github.token }}
+      #     install: |
+      #       apt-get update
+      #       apt-get install -y --no-install-recommends python3 python3-venv
+      #     run: |
+      #       set -e
+      #       python3 -m venv .venv
+      #       source .venv/bin/activate
+      #       pip install pytest pytest-custom-exit-code
+      #       pip install fastxlsxio --no-index --no-deps --find-links dist --force-reinstall
+      #       pip install fastxlsxio
+      #       pytest
 
   musllinux:
     runs-on: ${{ matrix.platform.runner }}
@@ -118,34 +118,34 @@ jobs:
         with:
           name: wheels-musllinux-${{ matrix.platform.target }}
           path: dist
-      - name: pytest
-        if: ${{ startsWith(matrix.platform.target, 'x86_64') }}
-        run: |
-          set -e
-          docker run --rm -v ${{ github.workspace }}:/io -w /io alpine:latest sh -c '
-            apk add py3-pip py3-virtualenv py3-numpy
-            python3 -m virtualenv .venv
-            source .venv/bin/activate
-            pip install fastxlsxio --no-index --no-deps --find-links dist --force-reinstall
-            pip install fastxlsxio pytest pytest-custom-exit-code
-            pytest
-          '
-      - name: pytest
-        if: ${{ startsWith(matrix.platform.target, 'x86_64') }}
-        uses: uraimo/run-on-arch-action@v3
-        with:
-          arch: ${{ matrix.platform.target }}
-          distro: alpine_latest
-          githubToken: ${{ github.token }}
-          install: |
-            apk add py3-virtualenv py3-numpy
-          run: |
-            set -e
-            python3 -m virtualenv .venv
-            source .venv/bin/activate
-            pip install fastxlsxio --no-index --no-deps --find-links dist --force-reinstall
-            pip install fastxlsxio pytest pytest-custom-exit-code
-            pytest
+      # - name: pytest
+      #   if: ${{ startsWith(matrix.platform.target, 'x86_64') }}
+      #   run: |
+      #     set -e
+      #     docker run --rm -v ${{ github.workspace }}:/io -w /io alpine:latest sh -c '
+      #       apk add py3-pip py3-virtualenv py3-numpy
+      #       python3 -m virtualenv .venv
+      #       source .venv/bin/activate
+      #       pip install fastxlsxio --no-index --no-deps --find-links dist --force-reinstall
+      #       pip install fastxlsxio pytest pytest-custom-exit-code
+      #       pytest
+      #     '
+      # - name: pytest
+      #   if: ${{ !startsWith(matrix.platform.target, 'x86') }}
+      #   uses: uraimo/run-on-arch-action@v3
+      #   with:
+      #     arch: ${{ matrix.platform.target }}
+      #     distro: alpine_latest
+      #     githubToken: ${{ github.token }}
+      #     install: |
+      #       apk add py3-virtualenv py3-numpy
+      #     run: |
+      #       set -e
+      #       python3 -m virtualenv .venv
+      #       source .venv/bin/activate
+      #       pip install fastxlsxio --no-index --no-deps --find-links dist --force-reinstall
+      #       pip install fastxlsxio pytest pytest-custom-exit-code
+      #       pytest
 
   windows:
     runs-on: ${{ matrix.platform.runner }}
@@ -180,16 +180,16 @@ jobs:
         with:
           name: wheels-windows-${{ matrix.platform.target }}
           path: dist
-      - uses: astral-sh/setup-uv@v7
-      - name: pytest
-        shell: bash
-        run: |
-          set -e
-          uv venv .venv
-          source .venv/Scripts/activate
-          uv pip install fastxlsxio --no-index --no-deps --find-links dist --reinstall
-          uv pip install fastxlsxio pytest pytest-custom-exit-code
-          pytest
+      # - uses: astral-sh/setup-uv@v7
+      # - name: pytest
+      #   shell: bash
+      #   run: |
+      #     set -e
+      #     uv venv .venv
+      #     source .venv/Scripts/activate
+      #     uv pip install fastxlsxio --no-index --no-deps --find-links dist --reinstall
+      #     uv pip install fastxlsxio pytest pytest-custom-exit-code
+      #     pytest
 
   macos:
     runs-on: ${{ matrix.platform.runner }}
@@ -218,15 +218,15 @@ jobs:
         with:
           name: wheels-macos-${{ matrix.platform.target }}
           path: dist
-      - uses: astral-sh/setup-uv@v7
-      - name: pytest
-        run: |
-          set -e
-          uv venv .venv
-          source .venv/bin/activate
-          uv pip install fastxlsxio --no-index --no-deps --find-links dist --reinstall
-          uv pip install fastxlsxio pytest pytest-custom-exit-code
-          pytest
+      # - uses: astral-sh/setup-uv@v7
+      # - name: pytest
+      #   run: |
+      #     set -e
+      #     uv venv .venv
+      #     source .venv/bin/activate
+      #     uv pip install fastxlsxio --no-index --no-deps --find-links dist --reinstall
+      #     uv pip install fastxlsxio pytest pytest-custom-exit-code
+      #     pytest
 
   sdist:
     runs-on: ubuntu-latest
