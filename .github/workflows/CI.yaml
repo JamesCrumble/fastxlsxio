@@ -65,7 +65,7 @@ jobs:
           uv venv .venv
           source .venv/bin/activate
           uv pip install fastxlsxio --no-index --no-deps --find-links dist --reinstall
-          uv pip install fastxlsxio pytest
+          uv pip install fastxlsxio pytest pytest-custom-exit-code
           pytest
       - name: pytest
         if: ${{ !startsWith(matrix.platform.target, 'x86') && matrix.platform.target != 'ppc64' }}
@@ -81,7 +81,7 @@ jobs:
             set -e
             python3 -m venv .venv
             source .venv/bin/activate
-            pip install pytest
+            pip install pytest pytest-custom-exit-code
             pip install fastxlsxio --no-index --no-deps --find-links dist --force-reinstall
             pip install fastxlsxio
             pytest
@@ -127,7 +127,7 @@ jobs:
             python3 -m virtualenv .venv
             source .venv/bin/activate
             pip install fastxlsxio --no-index --no-deps --find-links dist --force-reinstall
-            pip install fastxlsxio pytest
+            pip install fastxlsxio pytest pytest-custom-exit-code
             pytest
           '
       - name: pytest
@@ -144,7 +144,7 @@ jobs:
             python3 -m virtualenv .venv
             source .venv/bin/activate
             pip install fastxlsxio --no-index --no-deps --find-links dist --force-reinstall
-            pip install fastxlsxio pytest
+            pip install fastxlsxio pytest pytest-custom-exit-code
             pytest
 
   windows:
@@ -188,7 +188,7 @@ jobs:
           uv venv .venv
           source .venv/Scripts/activate
           uv pip install fastxlsxio --no-index --no-deps --find-links dist --reinstall
-          uv pip install fastxlsxio pytest
+          uv pip install fastxlsxio pytest pytest-custom-exit-code
           pytest
 
   macos:
@@ -225,7 +225,7 @@ jobs:
           uv venv .venv
           source .venv/bin/activate
           uv pip install fastxlsxio --no-index --no-deps --find-links dist --reinstall
-          uv pip install fastxlsxio pytest
+          uv pip install fastxlsxio pytest pytest-custom-exit-code
           pytest
 
   sdist:
