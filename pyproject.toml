@@ -9,7 +9,9 @@ classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: Implementation :: PyPy",
+    "License :: OSI Approved :: Apache Software License",
 ]
+
 dynamic = ["version"]
 dependencies = ["numpy"]
 
@@ -17,7 +19,7 @@ authors = [{ name = "JamesCrumble", email = "namster222333@gmail.com" }]
 maintainers = [{ name = "JamesCrumble", email = "namster222333@gmail.com" }]
 description = "A high-performance Excel XLSX reader/writer for Python built with Rust."
 readme = "README.md"
-license = "Apache License"
+license = "Apache-2.0"
 keywords = ["excel", "xlsx"]
 
 [project.urls]
