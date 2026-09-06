@@ -53,3 +53,6 @@ dev = [
 
 [tool.poetry]
 package-mode = false
+
+[tool.pytest.ini_options]
+addopts = "--suppress-no-test-exit-code"
