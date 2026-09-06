@@ -3,9 +3,10 @@ use crate::pyconv::*;
 use std::borrow::Cow;
 use std::sync::LazyLock;
 
-use pyo3::exceptions::{PyFileExistsError, PyRuntimeError, PyValueError};
+use pyo3::ffi;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDate, PyDateTime, PyDict, PyFloat, PyInt, PyTuple, PyList, PySequence, PyString, PyTime};
+use pyo3::exceptions::{PyFileExistsError, PyRuntimeError, PyValueError};
+use pyo3::types::{PyBool, PyDate, PyDateTime, PyDict, PyFloat, PyTuple, PyList, PySequence, PyString, PyTime};
 use rust_xlsxwriter::{Workbook, Worksheet, Format, ExcelDateTime, RowNum, ColNum};
 
 pub static DEFAULT_FORMAT: LazyLock<Format> = LazyLock::new(Format::default);
@@ -20,23 +21,33 @@ pub enum ExcelCell<'a> {
 }
 
 impl<'a> ExcelCell<'a> {
+
     pub fn from_py(elem: &'a Bound<'a, PyAny>) -> PyResult<Self> {
-        if let Ok(s) = elem.cast::<PyString>() {
-            return Ok(ExcelCell::String(Cow::Borrowed(s.to_str()?)));
+        let ptr = elem.as_ptr();
+
+        unsafe {
+            // as fast as possible for regular data types without downcast/cast
+            if ffi::PyFloat_CheckExact(ptr) != 0 {
+                let f: &Bound<'a, PyFloat> = elem.cast_unchecked();
+                return Ok(ExcelCell::Float(f.value()));
+            }
+            if ffi::PyLong_CheckExact(ptr) != 0 && ffi::PyBool_Check(ptr) == 0 {
+                let val: XlsxInt = elem.extract()?;
+                return Ok(ExcelCell::Int(val));
+            }
+            if ffi::PyUnicode_CheckExact(ptr) != 0 {
+                let s: &Bound<'a, PyString> = elem.cast_unchecked();
+                return Ok(ExcelCell::String(Cow::Borrowed(s.to_str()?)));
+            }
+            if elem.is_none() {
+                return Ok(ExcelCell::Blank);
+            }
+            if ffi::PyBool_Check(ptr) != 0 {
+                let b: &Bound<'a, PyBool> = elem.cast_unchecked();
+                return Ok(ExcelCell::Bool(b.is_true()));
+            }
         }
-        if elem.is_none() {
-            return Ok(ExcelCell::Blank);
-        }
-        if let Ok(f) = elem.cast::<PyFloat>() {
-            return Ok(ExcelCell::Float(f.value()));
-        }
-        if let Ok(b) = elem.cast::<PyBool>() {
-            return Ok(ExcelCell::Bool(b.is_true()));
-        }
-        if let Ok(i) = elem.cast::<PyInt>() {
-            let val: XlsxInt = i.extract()?;
-            return Ok(ExcelCell::Int(val));
-        }
+
         if let Ok(dt) = elem.cast::<PyDateTime>() {
             return Ok(ExcelCell::DateTime(pydatetime_xlsx_format(dt)?));
         }
@@ -49,7 +60,6 @@ impl<'a> ExcelCell<'a> {
         if elem.get_type().name()? == "Decimal" {
             return Ok(ExcelCell::Float(pydecimal_xlsx_format(elem)?));
         }
-        // TODO: support write sequences
 
         Err(PyValueError::new_err(format!(
             "Unsupported type for Excel export: {}",
@@ -62,37 +72,41 @@ impl<'a> ExcelCell<'a> {
             return Ok(ExcelCell::Blank);
         }
 
-        match hint {
-            ExcelCell::String(_) => {
-                if let Ok(s) = elem.cast::<PyString>() {
-                    return Ok(ExcelCell::String(Cow::Borrowed(s.to_str()?)));
+        let ptr = elem.as_ptr();
+
+        unsafe {
+            match hint {
+                ExcelCell::Float(_) => {
+                    if ffi::PyFloat_CheckExact(ptr) != 0 {
+                        let f: &Bound<'a, PyFloat> = elem.cast_unchecked();
+                        return Ok(ExcelCell::Float(f.value()));
+                    }
                 }
-            }
-            ExcelCell::Int(_) => {
-                if let Ok(f) = elem.extract::<XlsxInt>() {
-                    if !elem.is_instance_of::<PyBool>() {
-                        return Ok(ExcelCell::Int(f));
+                ExcelCell::Int(_) => {
+                    if ffi::PyLong_CheckExact(ptr) != 0 && ffi::PyBool_Check(ptr) == 0 {
+                        let val: XlsxInt = elem.extract()?;
+                        return Ok(ExcelCell::Int(val));
+                    }
+                }
+                ExcelCell::String(_) => {
+                    if ffi::PyUnicode_CheckExact(ptr) != 0 {
+                        let s: &Bound<'a, PyString> = elem.cast_unchecked();
+                        return Ok(ExcelCell::String(Cow::Borrowed(s.to_str()?)));
+                    }
+                }
+                ExcelCell::Bool(_) => {
+                    if ffi::PyBool_Check(ptr) != 0 {
+                        let b: &Bound<'a, PyBool> = elem.cast_unchecked();
+                        return Ok(ExcelCell::Bool(b.is_true()));
+                    }
+                }
+                ExcelCell::Blank => {}
+                ExcelCell::DateTime(_) => {
+                    if let Ok(dt) = elem.cast::<PyDateTime>() {
+                        return Ok(ExcelCell::DateTime(pydatetime_xlsx_format(dt)?));
                     }
                 }
             }
-            ExcelCell::Float(_) => {
-                if let Ok(f) = elem.extract::<XlsxFloat>() {
-                    if !elem.is_instance_of::<PyBool>() {
-                        return Ok(ExcelCell::Float(f));
-                    }
-                }
-            }
-            ExcelCell::Bool(_) => {
-                if let Ok(b) = elem.cast::<PyBool>() {
-                    return Ok(ExcelCell::Bool(b.is_true()));
-                }
-            }
-            ExcelCell::DateTime(_) => {
-                if let Ok(dt) = elem.cast::<PyDateTime>() {
-                    return Ok(ExcelCell::DateTime(pydatetime_xlsx_format(dt)?));
-                }
-            }
-            ExcelCell::Blank => {}
         }
 
         Self::from_py(elem)
@@ -225,6 +239,7 @@ impl XIOWorksheet {
         unsafe { &mut *self.worksheet }
     }
 
+    #[inline(always)]
     fn _write_cell_rs(
         &self,
         row: RowNum,
