@@ -68,7 +68,7 @@ jobs:
           uv pip install fastxlsxio pytest pytest-custom-exit-code
           pytest
       - name: pytest
-        if: ${{ !startsWith(matrix.platform.target, 'x86') && matrix.platform.target != 'ppc64' }}
+        if: ${{ !startsWith(matrix.platform.target, 'x86') && matrix.platform.target != 'ppc64le' }}
         uses: uraimo/run-on-arch-action@v3
         with:
           arch: ${{ matrix.platform.target }}
@@ -123,7 +123,7 @@ jobs:
         run: |
           set -e
           docker run --rm -v ${{ github.workspace }}:/io -w /io alpine:latest sh -c '
-            apk add py3-pip py3-virtualenv
+            apk add py3-pip py3-virtualenv py3-numpy
             python3 -m virtualenv .venv
             source .venv/bin/activate
             pip install fastxlsxio --no-index --no-deps --find-links dist --force-reinstall
@@ -138,7 +138,7 @@ jobs:
           distro: alpine_latest
           githubToken: ${{ github.token }}
           install: |
-            apk add py3-virtualenv
+            apk add py3-virtualenv py3-numpy
           run: |
             set -e
             python3 -m virtualenv .venv
