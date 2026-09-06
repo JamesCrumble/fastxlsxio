@@ -1,8 +1,9 @@
 use chrono::{NaiveDate, NaiveDateTime};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::IntoPyObject;
+use pyo3::{IntoPyObject, FromPyObject};
 use rust_xlsxwriter::IntoExcelData;
+
 #[derive(Clone)]
 pub enum CalamineData {
     Int(i64),
@@ -28,6 +29,28 @@ impl<'py> IntoPyObject<'py> for CalamineData {
             CalamineData::DateTime(v) => Ok(v.into_pyobject(py)?.as_any().clone()),
             CalamineData::Empty => Ok(py.None().into_pyobject(py)?.into_any()),
         }
+    }
+}
+impl<'a, 'py> FromPyObject<'a, 'py> for CalamineData {
+    type Error = PyErr;
+
+    fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        if ob.is_none() {
+            return Ok(Self::Empty);
+        } else if let Ok(bool_val) = ob.extract::<bool>() {
+            return Ok(Self::Bool(bool_val));
+        } else if let Ok(int_val) = ob.extract::<i64>() {
+            return Ok(Self::Int(int_val));
+        } else if let Ok(float_val) = ob.extract::<f64>() {
+            return Ok(Self::Float(float_val));
+        } else if let Ok(str_val) = ob.extract::<String>() {
+            return Ok(Self::Str(str_val));
+        } else if let Ok(datetime_val) = ob.extract::<NaiveDateTime>() {
+            return Ok(Self::DateTime(datetime_val));
+        } else if let Ok(date_val) = ob.extract::<NaiveDate>() {
+            return Ok(Self::Date(date_val));
+        }
+        return Err(PyValueError::new_err("Invalid type"));
     }
 }
 
@@ -73,24 +96,3 @@ macro_rules! impl_into_excel_data {
 }
 impl_into_excel_data!(Int, Float, Str, Bool);
 
-impl<'py> FromPyObject<'py> for CalamineData {
-    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        if ob.is_none() {
-            return Ok(Self::Empty);
-        } else if let Ok(bool_val) = ob.extract::<bool>() {
-            return Ok(Self::Bool(bool_val));
-        } else if let Ok(int_val) = ob.extract::<i64>() {
-            return Ok(Self::Int(int_val));
-        } else if let Ok(float_val) = ob.extract::<f64>() {
-            return Ok(Self::Float(float_val));
-        } else if let Ok(str_val) = ob.extract::<String>() {
-            return Ok(Self::Str(str_val));
-        } else if let Ok(datetime_val) = ob.extract::<NaiveDateTime>() {
-            // ! Notice that datetime.datetime could also be extract as NaiveDate, so must check datetime first
-            return Ok(Self::DateTime(datetime_val));
-        } else if let Ok(date_val) = ob.extract::<NaiveDate>() {
-            return Ok(Self::Date(date_val));
-        }
-        return Err(PyValueError::new_err("Invalid type"));
-    }
-}

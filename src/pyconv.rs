@@ -63,11 +63,11 @@ pub fn pyone_dimensional_iter_xlsx_format<'py>(seq: &Bound<'py, PySequence>) -> 
 
         if value.is_none() {
             continue;
-        } else if let Ok(b) = value.downcast::<PyBool>() {
+        } else if let Ok(b) = value.cast::<PyBool>() {
             buffer.push_str(pybool_xlsx_format(&b)?);
-        } else if let Ok(f) = value.downcast::<PyFloat>() {
+        } else if let Ok(f) = value.cast::<PyFloat>() {
             let _ = write!(buffer, "{}", round3(f.value()));
-        } else if let Ok(i) = value.downcast::<PyInt>() {
+        } else if let Ok(i) = value.cast::<PyInt>() {
             let i: XlsxInt = i.extract()?;
             let _ = write!(buffer, "{}", i);
         } else if let Ok(s) = value.extract::<&str>() {

@@ -10,8 +10,7 @@ pub use containers::{
     Array1Container, Array2Container, ValueContainer, WrappedValue, WriteToSheet,
 };
 
-/// Enumeration for data types.
-#[pyclass(eq, eq_int)]
+#[pyclass(from_py_object)]
 #[derive(PartialEq, Clone, Copy)]
 pub enum DType {
     Int,
@@ -23,8 +22,7 @@ pub enum DType {
     Any,
 }
 
-/// Class to describe the shape of data.
-#[pyclass(eq)]
+#[pyclass(from_py_object)]
 #[derive(PartialEq, Clone, Copy)]
 pub enum DShape {
     Scalar {},
@@ -33,8 +31,7 @@ pub enum DShape {
     Matrix { n_rows: usize, n_cols: usize },
 }
 
-/// Class to describe the range of data.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct RangeInfo {
     #[pyo3(get, set)]

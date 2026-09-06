@@ -21,29 +21,29 @@ pub enum ExcelCell<'a> {
 
 impl<'a> ExcelCell<'a> {
     pub fn from_py(elem: &'a Bound<'a, PyAny>) -> PyResult<Self> {
-        if let Ok(s) = elem.downcast::<PyString>() {
+        if let Ok(s) = elem.cast::<PyString>() {
             return Ok(ExcelCell::String(Cow::Borrowed(s.to_str()?)));
         }
         if elem.is_none() {
             return Ok(ExcelCell::Blank);
         }
-        if let Ok(f) = elem.downcast::<PyFloat>() {
+        if let Ok(f) = elem.cast::<PyFloat>() {
             return Ok(ExcelCell::Float(f.value()));
         }
-        if let Ok(b) = elem.downcast::<PyBool>() {
+        if let Ok(b) = elem.cast::<PyBool>() {
             return Ok(ExcelCell::Bool(b.is_true()));
         }
-        if let Ok(i) = elem.downcast::<PyInt>() {
+        if let Ok(i) = elem.cast::<PyInt>() {
             let val: XlsxInt = i.extract()?;
             return Ok(ExcelCell::Int(val));
         }
-        if let Ok(dt) = elem.downcast::<PyDateTime>() {
+        if let Ok(dt) = elem.cast::<PyDateTime>() {
             return Ok(ExcelCell::DateTime(pydatetime_xlsx_format(dt)?));
         }
-        if let Ok(d) = elem.downcast::<PyDate>() {
+        if let Ok(d) = elem.cast::<PyDate>() {
             return Ok(ExcelCell::DateTime(pydate_xlsx_format(d)?));
         }
-        if let Ok(t) = elem.downcast::<PyTime>() {
+        if let Ok(t) = elem.cast::<PyTime>() {
             return Ok(ExcelCell::DateTime(pytime_xlsx_format(t)?));
         }
         if elem.get_type().name()? == "Decimal" {
@@ -64,7 +64,7 @@ impl<'a> ExcelCell<'a> {
 
         match hint {
             ExcelCell::String(_) => {
-                if let Ok(s) = elem.downcast::<PyString>() {
+                if let Ok(s) = elem.cast::<PyString>() {
                     return Ok(ExcelCell::String(Cow::Borrowed(s.to_str()?)));
                 }
             }
@@ -83,12 +83,12 @@ impl<'a> ExcelCell<'a> {
                 }
             }
             ExcelCell::Bool(_) => {
-                if let Ok(b) = elem.downcast::<PyBool>() {
+                if let Ok(b) = elem.cast::<PyBool>() {
                     return Ok(ExcelCell::Bool(b.is_true()));
                 }
             }
             ExcelCell::DateTime(_) => {
-                if let Ok(dt) = elem.downcast::<PyDateTime>() {
+                if let Ok(dt) = elem.cast::<PyDateTime>() {
                     return Ok(ExcelCell::DateTime(pydatetime_xlsx_format(dt)?));
                 }
             }
@@ -155,7 +155,7 @@ macro_rules! unpack_formats {
                     if item.is_none() {
                         vec.push(None);
                     } else {
-                        vec.push(Some(item.downcast::<XIOFormat>()?.borrow()));
+                        vec.push(Some(item.cast::<XIOFormat>()?.borrow()));
                     }
                 }
                 vec
@@ -202,7 +202,7 @@ impl XIOFormat {
     }
 }
 
-#[pyclass(weakref)]
+#[pyclass(from_py_object, weakref)]
 #[derive(Clone)]
 pub struct XIOWorksheet {
     worksheet: *mut Worksheet,
@@ -289,7 +289,7 @@ impl XIOWorksheet {
         unpack_formats!(formats, rs_formats);
 
         // PyList directly
-        if let Ok(list) = value.downcast::<PyList>() {
+        if let Ok(list) = value.cast::<PyList>() {
             for (offset, item) in list.iter().enumerate() {
                 extract_format_by_offset!(rs_formats, offset, rs_format);
                 self._write_cell_rs(row, col + offset as ColNum, ExcelCell::from_py(&item)?, rs_format)?;
@@ -298,7 +298,7 @@ impl XIOWorksheet {
         }
 
         // PyTuple directly
-        if let Ok(tuple) = value.downcast::<PyTuple>() {
+        if let Ok(tuple) = value.cast::<PyTuple>() {
             for (offset, item) in tuple.iter().enumerate() {
                 extract_format_by_offset!(rs_formats, offset, rs_format);
                 self._write_cell_rs(row, col + offset as ColNum, ExcelCell::from_py(&item)?, rs_format)?;
@@ -306,7 +306,7 @@ impl XIOWorksheet {
             return Ok(());
         }
 
-        let iter_result= if let Ok(dict) = value.downcast::<PyDict>() {
+        let iter_result= if let Ok(dict) = value.cast::<PyDict>() {
             dict.values().try_iter()
         } else {
             value.try_iter()
@@ -441,7 +441,7 @@ impl XIOWorksheet {
         let py_str = value.str()?; 
         let rust_str: &str = py_str.to_str()?;
 
-        py.allow_threads(|| {
+        py.detach(|| {
             worksheet.merge_range(first_row, first_col, last_row, last_col, rust_str, rs_format.unwrap_or(&DEFAULT_FORMAT))
         })
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -527,7 +527,7 @@ impl XIOWorkbook {
             Some(p) => {path = p}
             None => {path = self.filepath.clone().unwrap()}
         }
-        py.allow_threads(|| {self.workbook.save(path)}).map_err(|e| PyFileExistsError::new_err(e.to_string()))
+        py.detach(|| {self.workbook.save(path)}).map_err(|e| PyFileExistsError::new_err(e.to_string()))
     }
 
     fn get_by_idx(&mut self, idx: usize) -> PyResult<XIOWorksheet> {

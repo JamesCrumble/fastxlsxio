@@ -66,14 +66,16 @@ impl_into_pyobject_for_array2_container_other!(String NaiveDate NaiveDateTime Ca
 
 macro_rules! impl_from_py_for_array2_container_numeric {
     ($err_msg:literal, $target_type:ty, $(($($source_type:ty)*))?) => {
-        impl<'py> FromPyObject<'py> for Array2Container<$target_type> {
-            fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-                if let Ok(array) = ob.downcast::<PyArray2<$target_type>>() {
+        impl<'py> FromPyObject<'py, 'py> for Array2Container<$target_type> {
+            type Error = PyErr;
+
+            fn extract(ob: Borrowed<'py, 'py, PyAny>) -> PyResult<Self> {
+                if let Ok(array) = ob.cast::<PyArray2<$target_type>>() {
                     return Ok(Self { value: array.to_owned_array() });
                 }
                 $(
                     $(
-                        if let Ok(array) = ob.downcast::<PyArray2<$source_type>>() {
+                        if let Ok(array) = ob.cast::<PyArray2<$source_type>>() {
                             return Ok(Self {
                                 value: array.to_owned_array().mapv(<$target_type>::from)
                             });
@@ -90,8 +92,10 @@ macro_rules! impl_from_py_for_array2_container_numeric {
 }
 macro_rules! impl_from_py_for_array2_container_other {
     ($($type:ty)*) => ($(
-        impl<'py> FromPyObject<'py> for Array2Container<$type> {
-            fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        impl<'py> FromPyObject<'py, 'py> for Array2Container<$type> {
+            type Error = PyErr;
+
+            fn extract(ob: Borrowed<'py, 'py, PyAny>) -> PyResult<Self> {
                 if let Ok(mat) = ob.extract::<Vec<Vec<$type>>>() {
                     let mut res_vec: Vec<$type> = Vec::new();
                     let n_rows = mat.len();
