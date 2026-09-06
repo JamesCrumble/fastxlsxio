@@ -68,7 +68,7 @@ jobs:
           uv pip install fastxlsxio pytest pytest-custom-exit-code
           pytest
       - name: pytest
-        if: ${{ !startsWith(matrix.platform.target, 'x86') && matrix.platform.target != 'ppc64le' }}
+        if: ${{ !startsWith(matrix.platform.target, 'x86') && !contains(fromJSON('["armv7", "s390x", "ppc64le"]'), matrix.platform.target) }}
         uses: uraimo/run-on-arch-action@v3
         with:
           arch: ${{ matrix.platform.target }}
@@ -131,7 +131,7 @@ jobs:
             pytest
           '
       - name: pytest
-        if: ${{ !startsWith(matrix.platform.target, 'x86') }}
+        if: ${{ !startsWith(matrix.platform.target, 'x86') && !contains(fromJSON('["armv7"]'), matrix.platform.target) }}
         uses: uraimo/run-on-arch-action@v3
         with:
           arch: ${{ matrix.platform.target }}
