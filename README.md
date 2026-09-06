@@ -14,11 +14,11 @@
 
 ## 🛠️ Installation
 
-<!-- ### PyPI Install
+### PyPI Install
 
 ```bash
 pip install fastxlsxio
-``` -->
+```
 
 ### Source Build (Requires Rust Toolchain)
 
