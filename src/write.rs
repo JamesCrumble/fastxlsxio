@@ -11,6 +11,30 @@ use rust_xlsxwriter::{Workbook, Worksheet, Format, ExcelDateTime, RowNum, ColNum
 
 pub static DEFAULT_FORMAT: LazyLock<Format> = LazyLock::new(Format::default);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColTypeHint {
+    Float,
+    Int,
+    String,
+    Bool,
+    DateTime,
+    Blank,
+    Unknown,
+}
+
+impl ColTypeHint {
+    pub fn from_excel_cell(cell: &ExcelCell) -> Self {
+        match cell {
+            ExcelCell::Float(_) => ColTypeHint::Float,
+            ExcelCell::Int(_) => ColTypeHint::Int,
+            ExcelCell::String(_) => ColTypeHint::String,
+            ExcelCell::Bool(_) => ColTypeHint::Bool,
+            ExcelCell::DateTime(_) => ColTypeHint::DateTime,
+            ExcelCell::Blank => ColTypeHint::Blank,
+        }
+    }
+}
+
 pub enum ExcelCell<'a> {
     String(Cow<'a, str>),
     Float(XlsxFloat),
@@ -67,49 +91,48 @@ impl<'a> ExcelCell<'a> {
         )))
     }
 
-    pub fn from_py_speculative(elem: &'a Bound<'a, PyAny>, hint: &ExcelCell) -> PyResult<Self> {
-        if elem.is_none() {
-            return Ok(ExcelCell::Blank);
-        }
-
-        let ptr = elem.as_ptr();
-
-        unsafe {
-            match hint {
-                ExcelCell::Float(_) => {
-                    if ffi::PyFloat_CheckExact(ptr) != 0 {
-                        let f: &Bound<'a, PyFloat> = elem.cast_unchecked();
-                        return Ok(ExcelCell::Float(f.value()));
+    pub fn from_py_hinted(elem: &'a Bound<'a, PyAny>, hint: Option<ColTypeHint>,) -> PyResult<(Self, ColTypeHint)> {
+        if let Some(h) = hint {
+            let ptr = elem.as_ptr();
+            unsafe {
+                match h {
+                    ColTypeHint::Float => {
+                        if ffi::PyFloat_CheckExact(ptr) != 0 {
+                            let f: &Bound<'a, PyFloat> = elem.cast_unchecked();
+                            return Ok((ExcelCell::Float(f.value()), ColTypeHint::Float));
+                        }
                     }
-                }
-                ExcelCell::Int(_) => {
-                    if ffi::PyLong_CheckExact(ptr) != 0 && ffi::PyBool_Check(ptr) == 0 {
-                        let val: XlsxInt = elem.extract()?;
-                        return Ok(ExcelCell::Int(val));
+                    ColTypeHint::Int => {
+                        if ffi::PyLong_CheckExact(ptr) != 0 && ffi::PyBool_Check(ptr) == 0 {
+                            let val: XlsxInt = elem.extract()?;
+                            return Ok((ExcelCell::Int(val), ColTypeHint::Int));
+                        }
                     }
-                }
-                ExcelCell::String(_) => {
-                    if ffi::PyUnicode_CheckExact(ptr) != 0 {
-                        let s: &Bound<'a, PyString> = elem.cast_unchecked();
-                        return Ok(ExcelCell::String(Cow::Borrowed(s.to_str()?)));
+                    ColTypeHint::String => {
+                        if ffi::PyUnicode_CheckExact(ptr) != 0 {
+                            let s: &Bound<'a, PyString> = elem.cast_unchecked();
+                            return Ok((ExcelCell::String(Cow::Borrowed(s.to_str()?)), ColTypeHint::String));
+                        }
                     }
-                }
-                ExcelCell::Bool(_) => {
-                    if ffi::PyBool_Check(ptr) != 0 {
-                        let b: &Bound<'a, PyBool> = elem.cast_unchecked();
-                        return Ok(ExcelCell::Bool(b.is_true()));
+                    ColTypeHint::Bool => {
+                        if ffi::PyBool_Check(ptr) != 0 {
+                            let b: &Bound<'a, PyBool> = elem.cast_unchecked();
+                            return Ok((ExcelCell::Bool(b.is_true()), ColTypeHint::Bool));
+                        }
                     }
-                }
-                ExcelCell::Blank => {}
-                ExcelCell::DateTime(_) => {
-                    if let Ok(dt) = elem.cast::<PyDateTime>() {
-                        return Ok(ExcelCell::DateTime(pydatetime_xlsx_format(dt)?));
+                    ColTypeHint::Blank => {
+                        if elem.is_none() {
+                            return Ok((ExcelCell::Blank, ColTypeHint::Blank));
+                        }
                     }
+                    _ => {}
                 }
             }
         }
 
-        Self::from_py(elem)
+        let cell = Self::from_py(elem)?;
+        let new_hint = ColTypeHint::from_excel_cell(&cell);
+        Ok((cell, new_hint))
     }
 
     pub fn write(
@@ -221,6 +244,7 @@ impl XIOFormat {
 pub struct XIOWorksheet {
     worksheet: *mut Worksheet,
     is_constant_memory: bool,
+    col_hints: Vec<ColTypeHint>,
 }
 unsafe impl Send for XIOWorksheet {}
 unsafe impl Sync for XIOWorksheet {}
@@ -241,30 +265,42 @@ impl XIOWorksheet {
 
     #[inline(always)]
     fn _write_cell_rs(
-        &self,
+        &mut self,
         row: RowNum,
         col: ColNum,
-        cell: ExcelCell,
+        value: &Bound<'_, PyAny>,
         format: Option<&Format>,
     ) -> PyResult<()> {
+        let hint_idx = col as usize;
+        let cached_hint = self.col_hints.get(hint_idx).copied();
+
+        let (cell, hint) = ExcelCell::from_py_hinted(value, cached_hint)?;
+        if hint_idx >= self.col_hints.len() {
+            self.col_hints.resize(hint_idx + 1, ColTypeHint::Unknown);
+        }
+        self.col_hints[hint_idx] = hint;
+
+
         cell.write(self.worksheet_refmut(), row, col, format)
     }
 
     fn _write_cell(
-        &self,
+        &mut self,
         row: RowNum,
         col: ColNum,
-        cell: ExcelCell,
+        value: &Bound<'_, PyAny>,
         format: Option<&Bound<'_, XIOFormat>>,
     ) -> PyResult<()> {
         unpack_format!(format, rs_format);
-        self._write_cell_rs(row, col, cell, rs_format)
+        self._write_cell_rs(row, col, value, rs_format)
     }
 
     pub fn internal_new(worksheet: &mut Worksheet, name: String, is_constant_memory: bool) -> Self {
         let _ = worksheet.set_name(name);
         Self {
-            worksheet: worksheet as *mut Worksheet, is_constant_memory: is_constant_memory
+            worksheet: worksheet as *mut Worksheet, 
+            is_constant_memory: is_constant_memory, 
+            col_hints: Vec::new(),
         }
     }
 }
@@ -290,7 +326,7 @@ impl XIOWorksheet {
         value: &Bound<'py, PyAny>,
         format: Option<&Bound<'py, XIOFormat>>,
     ) -> PyResult<()> {
-        self._write_cell(row, col, ExcelCell::from_py(value)?, format)
+        self._write_cell(row, col, value, format)
     }
 
     #[pyo3(signature = (row, col, value, formats = None))]
@@ -307,7 +343,7 @@ impl XIOWorksheet {
         if let Ok(list) = value.cast::<PyList>() {
             for (offset, item) in list.iter().enumerate() {
                 extract_format_by_offset!(rs_formats, offset, rs_format);
-                self._write_cell_rs(row, col + offset as ColNum, ExcelCell::from_py(&item)?, rs_format)?;
+                self._write_cell_rs(row, col + offset as ColNum, &item, rs_format)?;
             }
             return Ok(());
         }
@@ -316,7 +352,7 @@ impl XIOWorksheet {
         if let Ok(tuple) = value.cast::<PyTuple>() {
             for (offset, item) in tuple.iter().enumerate() {
                 extract_format_by_offset!(rs_formats, offset, rs_format);
-                self._write_cell_rs(row, col + offset as ColNum, ExcelCell::from_py(&item)?, rs_format)?;
+                self._write_cell_rs(row, col + offset as ColNum, &item, rs_format)?;
             }
             return Ok(());
         }
@@ -331,7 +367,7 @@ impl XIOWorksheet {
 
         for (offset, item) in iter_result.enumerate() {
             extract_format_by_offset!(rs_formats, offset, rs_format);
-            self._write_cell_rs(row, col + offset as ColNum, ExcelCell::from_py(&item.unwrap())?, rs_format)?;
+            self._write_cell_rs(row, col + offset as ColNum, &item.unwrap(), rs_format)?;
         }
 
         Ok(())
@@ -345,27 +381,10 @@ impl XIOWorksheet {
         value: &Bound<'py, PySequence>,
         formats: Option<&Bound<'py, PyList>>,
     ) -> PyResult<()> {
-        
-        let mut rows_iter = value.try_iter()?;
-        let Some(first_row_res) = rows_iter.next() else {
-            return Ok(());
-        };
-        let first_row_obj = first_row_res?;
-        
-        // Collect first row only to evaluate column count and hints
-        let first_row: Vec<Bound<'py, PyAny>> = first_row_obj
-            .try_iter()?
-            .collect::<PyResult<_>>()?;
-
-        let col_hints: Vec<Option<ExcelCell>> = first_row
-            .iter()
-            .map(|cell| ExcelCell::from_py(cell).ok())
-            .collect();
-    
         unpack_formats!(formats, rs_formats);
-        let full_rows_iter = std::iter::once(Ok(first_row_obj)).chain(rows_iter);
-
-        for (r_offset, row_obj_res) in full_rows_iter.enumerate() {
+        
+        let rows_iter = value.try_iter()?;
+        for (r_offset, row_obj_res) in rows_iter.enumerate() {
             let row_obj = row_obj_res?;
             let current_row = row + r_offset as RowNum;
 
@@ -374,13 +393,7 @@ impl XIOWorksheet {
                 let current_col = col + c_offset as ColNum;
 
                 extract_format_by_offset!(rs_formats, c_offset, rs_format);
-                let hint = col_hints.get(c_offset).and_then(|h| h.as_ref());
-
-                let cell = match hint {
-                    Some(h) => ExcelCell::from_py_speculative(&cell_obj, h)?,
-                    None => ExcelCell::from_py(&cell_obj)?,
-                };
-                self._write_cell_rs(current_row, current_col, cell, rs_format)?;
+                self._write_cell_rs(current_row, current_col, &cell_obj, rs_format)?;
             }
         }
 
@@ -406,34 +419,19 @@ impl XIOWorksheet {
             ));
         }
 
-        let mut iter = value.try_iter().map_err(|e| {
+        unpack_format!(format, rs_format);
+        let iter = value.try_iter().map_err(|e| {
             PyValueError::new_err(format!("Cannot write column from invalid object: {}", e))
         })?;
 
-        let Some(first_elem_res) = iter.next() else {
-            return Ok(());
-        };
-        let first_elem = first_elem_res?;
 
-        let hint = if !first_elem.is_none() {
-            ExcelCell::from_py(&first_elem).ok()
-        } else {
-            None
-        };
-
-        let full_iter = std::iter::once(Ok(first_elem.clone())).chain(iter);
-        for (offset, elem_res) in full_iter.enumerate() {
+        for (offset, elem_res) in iter.enumerate() {
             let elem = elem_res?;
             if elem.is_none() {
                 continue;
             }
 
-            let cell = match &hint {
-                Some(sample) => ExcelCell::from_py_speculative(&elem, sample)?,
-                None => ExcelCell::from_py(&elem)?,
-            };
-
-            self._write_cell_rs(row + offset as RowNum, col, cell, None)?;
+            self._write_cell_rs(row + offset as RowNum, col, value, rs_format)?;
         }
 
         Ok(())
