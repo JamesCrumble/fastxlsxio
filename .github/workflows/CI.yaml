@@ -5,11 +5,6 @@
 #
 name: CI
 
-aliases:
-  - &maturin_env
-    env:
-      PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
-
 on:
   push:
     branches:
@@ -53,7 +48,8 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: auto
-        <<: *maturin_env
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -115,7 +111,8 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
-        <<: *maturin_env
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -176,7 +173,8 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        <<: *maturin_env
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -213,7 +211,8 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        <<: *maturin_env
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -238,7 +237,8 @@ jobs:
         with:
           command: sdist
           args: --out dist
-        <<: *maturin_env
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
       - name: Upload sdist
         uses: actions/upload-artifact@v6
         with:
