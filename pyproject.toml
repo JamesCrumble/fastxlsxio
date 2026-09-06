@@ -44,11 +44,11 @@ bench = [
     "python-calamine",
     "pylightxl",
 ]
-dev = ["pytest", "ruff>=0.8.4"]
-
-[dependency-groups]
 dev = [
-    "xlsxwriter (>=3.2.9,<4.0.0)"
+    "pytest", 
+    "pytest-custom-exit-code",
+    "ruff>=0.8.4",
+    "xlsxwriter (>=3.2.9,<4.0.0)",
 ]
 
 [tool.poetry]
