@@ -245,6 +245,7 @@ pub struct XIOWorksheet {
     worksheet: *mut Worksheet,
     is_constant_memory: bool,
     col_hints: Vec<ColTypeHint>,
+    col_formats_setted: Vec<bool>,
 }
 unsafe impl Send for XIOWorksheet {}
 unsafe impl Sync for XIOWorksheet {}
@@ -270,16 +271,34 @@ impl XIOWorksheet {
         value: &Bound<'_, PyAny>,
         format: Option<&Format>,
     ) -> PyResult<()> {
-        let hint_idx = col as usize;
-        let cached_hint = self.col_hints.get(hint_idx).copied();
+        let colidx = col as usize;
+        let cached_hint = self.col_hints.get(colidx).copied();
 
         let (cell, hint) = ExcelCell::from_py_hinted(value, cached_hint)?;
-        if hint_idx >= self.col_hints.len() {
-            self.col_hints.resize(hint_idx + 1, ColTypeHint::Unknown);
+        if colidx >= self.col_hints.len() {
+            self.col_hints.resize(colidx + 1, ColTypeHint::Unknown);
         }
-        self.col_hints[hint_idx] = hint;
+        self.col_hints[colidx] = hint;
 
-        cell.write(self.worksheet_refmut(), row, col, format)
+        // TODO: move format caching as config option
+        if colidx >= self.col_formats_setted.len() {
+            self.col_formats_setted.resize(colidx + 1, false);
+        }
+        
+        let fmtflag = self.col_formats_setted[colidx];
+        if !fmtflag && format.is_some() {
+            self.col_formats_setted[colidx] = true;
+        }
+
+        let worksheet = self.worksheet_refmut();
+        if !fmtflag && format.is_some() {
+            // TODO: mb add format caching type to allow set_row_format
+            worksheet
+                .set_column_format(col, format.unwrap())
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        }
+
+        cell.write(worksheet, row, col, None)
     }
 
     pub fn internal_new(worksheet: &mut Worksheet, name: String, is_constant_memory: bool) -> Self {
@@ -288,6 +307,7 @@ impl XIOWorksheet {
             worksheet: worksheet as *mut Worksheet, 
             is_constant_memory: is_constant_memory, 
             col_hints: Vec::new(),
+            col_formats_setted: Vec::new(),
         }
     }
 }
