@@ -5,7 +5,7 @@ class XIOFormat:
     @staticmethod
     def from_properties(properties: dict[str, Any]) -> XIOFormat: ...
 
-class XIOWorksheet:
+class XIOWWorksheet:
     """xlsxwriter worksheet-like class"""
 
     def __init__(self, title: str) -> None:
@@ -113,11 +113,11 @@ class XIOWorksheet:
             The matrix of values to write.
         """
 
-class XIOWorkbook:
+class XIOWWorkbook:
     """xlsxwriter workbook-like class"""
 
     def __init__(self) -> None: ...
-    def add_worksheet(self, name: str, constant_memory: bool = False) -> XIOWorksheet:
+    def add_worksheet(self, name: str, constant_memory: bool = False) -> XIOWWorksheet:
         """Create a new worksheet with the specified name.
 
         Parameters
@@ -129,7 +129,7 @@ class XIOWorkbook:
 
         Returns
         -------
-        XIOWorksheet
+        XIOWWorksheet
             The newly created worksheet.
         """
     def add_format(self, properties: dict[str, Any]) -> XIOFormat:
@@ -146,12 +146,12 @@ class XIOWorkbook:
         Returns
         -------
         XIOFormat
-            The format class to use in XIOWorksheet.write_... methods
+            The format class to use in XIOWWorksheet.write_... methods
         """
-    def get_by_idx(self, idx: int) -> XIOWorksheet:
+    def get_by_idx(self, idx: int) -> XIOWWorksheet:
         """Get a worksheet by its 0-based index."""
 
-    def get_by_name(self, name: str) -> XIOWorksheet:
+    def get_by_name(self, name: str) -> XIOWWorksheet:
         """Get a worksheet by its name."""
 
     def save(self, path: str) -> None:

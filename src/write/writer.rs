@@ -1,4 +1,4 @@
-use crate::pyconv::*;
+use crate::write::pyconv::*;
 
 use std::borrow::Cow;
 use std::sync::LazyLock;
@@ -241,16 +241,16 @@ impl XIOFormat {
 
 #[pyclass(from_py_object, weakref)]
 #[derive(Clone)]
-pub struct XIOWorksheet {
+pub struct XIOWWorksheet {
     worksheet: *mut Worksheet,
     is_constant_memory: bool,
     col_hints: Vec<ColTypeHint>,
     col_formats_setted: Vec<bool>,
 }
-unsafe impl Send for XIOWorksheet {}
-unsafe impl Sync for XIOWorksheet {}
+unsafe impl Send for XIOWWorksheet {}
+unsafe impl Sync for XIOWWorksheet {}
 
-impl XIOWorksheet {
+impl XIOWWorksheet {
 
     #[inline(always)]
     fn worksheet_ref(&self) -> &Worksheet {
@@ -313,7 +313,7 @@ impl XIOWorksheet {
 }
 
 #[pymethods]
-impl XIOWorksheet {
+impl XIOWWorksheet {
     
     #[getter]
     pub fn constant_memory(&self) -> bool {
@@ -481,18 +481,18 @@ impl XIOWorksheet {
     }
 
     fn __repr__(&mut self) -> String {
-        format!("<XIOWorksheet \"{}\">", self.name())
+        format!("<XIOWWorksheet \"{}\">", self.name())
     }
 }
 
 #[pyclass]
-pub struct XIOWorkbook {
+pub struct XIOWWorkbook {
     filepath: Option<String>,
     workbook: Workbook,
-    worksheets: Vec<XIOWorksheet>,
+    worksheets: Vec<XIOWWorksheet>,
 }
 
-impl XIOWorkbook {
+impl XIOWWorkbook {
     fn get_sheetnames_string(&mut self) -> String {
         let sheetnames = self.workbook.worksheets().iter()
             .map(|x| format!("\"{}\"", x.name()))
@@ -502,7 +502,7 @@ impl XIOWorkbook {
 }
 
 #[pymethods]
-impl XIOWorkbook {
+impl XIOWWorkbook {
 
     #[new]
     #[pyo3(signature = (filepath = None))]
@@ -520,14 +520,14 @@ impl XIOWorkbook {
     }
 
     #[pyo3(signature = (name, constant_memory = false))]
-    fn add_worksheet(&mut self, name: String, constant_memory: bool) -> PyResult<XIOWorksheet> {
+    fn add_worksheet(&mut self, name: String, constant_memory: bool) -> PyResult<XIOWWorksheet> {
         let worksheet = if constant_memory {
             self.workbook.add_worksheet_with_constant_memory()
         } else {
             self.workbook.add_worksheet()
         };
 
-        let sheet = XIOWorksheet::internal_new(worksheet, name, constant_memory);
+        let sheet = XIOWWorksheet::internal_new(worksheet, name, constant_memory);
         self.worksheets.push(sheet.clone());
 
         Ok(sheet)
@@ -547,7 +547,7 @@ impl XIOWorkbook {
         py.detach(|| {self.workbook.save(path)}).map_err(|e| PyFileExistsError::new_err(e.to_string()))
     }
 
-    fn get_by_idx(&mut self, idx: usize) -> PyResult<XIOWorksheet> {
+    fn get_by_idx(&mut self, idx: usize) -> PyResult<XIOWWorksheet> {
         let sheet = self
             .worksheets
             .get(idx)
@@ -556,7 +556,7 @@ impl XIOWorkbook {
         Ok(sheet.clone())
     }
 
-    fn get_by_name(&mut self, name: String) -> PyResult<XIOWorksheet> {
+    fn get_by_name(&mut self, name: String) -> PyResult<XIOWWorksheet> {
         let sheet = self
             .worksheets
             .iter()
@@ -576,7 +576,7 @@ impl XIOWorkbook {
 
     fn __repr__(&mut self) -> String {
         format!(
-            "<XIOWorkbook(sheetnames={})>",
+            "<XIOWWorkbook(sheetnames={})>",
             self.get_sheetnames_string()
         )
     }

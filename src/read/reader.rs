@@ -1,7 +1,7 @@
-use crate::fromcell::FromCell;
-use crate::types::{Array1Container, Array2Container, ValueContainer, WrappedValue};
-use crate::types::{CalamineData, CellAddr, DShape, DType, IdxOrName, ListOrDict, RangeInfo};
-use crate::utils::adjust_idx;
+use crate::read::fromcell::FromCell;
+use crate::read::types::{Array1Container, Array2Container, ValueContainer, WrappedValue};
+use crate::read::types::{CalamineData, CellAddr, DShape, DType, IdxOrName, ListOrDict, RangeInfo};
+use crate::read::utils::adjust_idx;
 use calamine::{open_workbook, Data, Range, Reader, Xlsx};
 use chrono::{NaiveDate, NaiveDateTime};
 use indexmap::IndexMap;
@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 /// Read-only worksheet class
 #[pyclass]
-pub struct ReadOnlyWorksheet {
+pub struct XIORWorksheet {
     pub sheet: Range<Data>,
     #[pyo3(get)]
     pub n_rows: usize,
@@ -24,7 +24,7 @@ pub struct ReadOnlyWorksheet {
     #[pyo3(get)]
     pub title: String,
 }
-impl ReadOnlyWorksheet {
+impl XIORWorksheet {
     pub fn new(sheet: Range<Data>, title: String) -> Self {
         let (n_rows, n_cols) = sheet.get_size();
         Self {
@@ -81,7 +81,7 @@ impl ReadOnlyWorksheet {
 }
 
 #[pymethods]
-impl ReadOnlyWorksheet {
+impl XIORWorksheet {
     /**
         Read a single value from the worksheet based on the specified range.
 
@@ -185,13 +185,13 @@ impl ReadOnlyWorksheet {
         self.read_value(&range_info)
     }
     fn __repr__(&self) -> String {
-        format!("<ReadOnlyWorksheet \"{}\">", self.title)
+        format!("<XIORWorksheet \"{}\">", self.title)
     }
 }
 
 /// Read-only workbook class
 #[pyclass]
-pub struct ReadOnlyWorkbook {
+pub struct XIORWorkbook {
     #[pyo3(get)]
     pub path: PathBuf,
     pub xlsx: Xlsx<BufReader<File>>,
@@ -201,9 +201,9 @@ pub struct ReadOnlyWorkbook {
     pub sheetnames: Vec<String>,
 }
 #[pymethods]
-impl ReadOnlyWorkbook {
+impl XIORWorkbook {
     /**
-        Generate a `ReadOnlyWorkbook` object.
+        Generate a `XIORWorkbook` object.
 
         Parameters
         ----------
@@ -238,11 +238,11 @@ impl ReadOnlyWorkbook {
 
         Returns
         -------
-        ReadOnlyWorksheet
+        XIORWorksheet
     */
-    fn get_by_name(&mut self, sheet_name: String) -> PyResult<ReadOnlyWorksheet> {
+    fn get_by_name(&mut self, sheet_name: String) -> PyResult<XIORWorksheet> {
         match self.xlsx.worksheet_range(&sheet_name) {
-            Ok(sheet) => return Ok(ReadOnlyWorksheet::new(sheet, sheet_name)),
+            Ok(sheet) => return Ok(XIORWorksheet::new(sheet, sheet_name)),
             Err(e) => return Err(PyErr::new::<PyFileExistsError, _>(format!("{e}"))),
         }
     }
@@ -256,13 +256,13 @@ impl ReadOnlyWorkbook {
 
         Returns
         -------
-        ReadOnlyWorksheet
+        XIORWorksheet
     */
-    fn get_by_idx(&mut self, idx: usize) -> PyResult<ReadOnlyWorksheet> {
+    fn get_by_idx(&mut self, idx: usize) -> PyResult<XIORWorksheet> {
         if let Some(result) = self.xlsx.worksheet_range_at(idx) {
             match result {
                 Ok(sheet) => {
-                    return Ok(ReadOnlyWorksheet::new(
+                    return Ok(XIORWorksheet::new(
                         sheet,
                         self.sheetnames.get(idx).unwrap().to_owned(),
                     ))
@@ -285,9 +285,9 @@ impl ReadOnlyWorkbook {
 
         Returns
         -------
-        ReadOnlyWorksheet
+        XIORWorksheet
     */
-    fn get(&mut self, idx_or_name: IdxOrName) -> PyResult<ReadOnlyWorksheet> {
+    fn get(&mut self, idx_or_name: IdxOrName) -> PyResult<XIORWorksheet> {
         match idx_or_name {
             IdxOrName::Idx(idx) => self.get_by_idx(adjust_idx(idx, self.n_sheets)),
             IdxOrName::Name(name) => self.get_by_name(name),
@@ -342,7 +342,7 @@ impl ReadOnlyWorkbook {
     }
     /// The sheets.
     #[getter]
-    fn worksheets(&mut self) -> PyResult<Vec<ReadOnlyWorksheet>> {
+    fn worksheets(&mut self) -> PyResult<Vec<XIORWorksheet>> {
         (0..self.n_sheets)
             .into_iter()
             .map(|idx| self.get_by_idx(idx))
@@ -405,7 +405,7 @@ pub fn read_many(
     workbooks_to_read
         .into_par_iter()
         .map(|(path, worksheets)| {
-            let mut workbook = ReadOnlyWorkbook::new(PathBuf::from(path.clone()))?;
+            let mut workbook = XIORWorkbook::new(PathBuf::from(path.clone()))?;
             Ok((path, workbook.read_worksheets(worksheets)?))
         })
         .collect()

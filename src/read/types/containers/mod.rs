@@ -1,4 +1,4 @@
-use crate::types::{CalamineData, DShape, DType};
+use crate::read::types::{CalamineData, DShape, DType};
 use chrono::{NaiveDate, NaiveDateTime};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;

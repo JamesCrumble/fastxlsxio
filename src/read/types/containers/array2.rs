@@ -1,4 +1,4 @@
-use crate::types::CalamineData;
+use crate::read::types::CalamineData;
 use chrono::{NaiveDate, NaiveDateTime};
 use ndarray::Array2;
 use numpy::{PyArray2, PyArrayMethods, ToPyArray};

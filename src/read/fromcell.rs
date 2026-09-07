@@ -1,4 +1,4 @@
-use crate::types::CalamineData;
+use crate::read::types::CalamineData;
 use calamine::{Data, DataType};
 use chrono::{NaiveDate, NaiveDateTime};
 use pyo3::exceptions::PyValueError;
