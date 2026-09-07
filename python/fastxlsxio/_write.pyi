@@ -181,7 +181,7 @@ class XIOWWorkbook:
     def get_by_name(self, name: str) -> XIOWWorksheet:
         """Get a worksheet by its name."""
 
-    def save(self, path: str) -> None:
+    def save(self, path: str | None = None) -> None:
         """Save the workbook to the specified file path."""
 
     @property

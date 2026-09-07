@@ -25,13 +25,12 @@ data = list(data_by_batch())
 def fastxlsxio_build(xlsx: str):
     sheets = ("Sheet 3", "Sheet 1", "Sheet 2")
 
-    excel = XIOWWorkbook()
-    print(excel.options)
-    format_ = excel.add_format({"num_format": "0"})
+    excel = XIOWWorkbook(xlsx)
+    format_ = excel.add_format({"num_format": "###.0"})
     rows_written: int = 0
     for sheet in sheets:
         st = time.monotonic()
-        sheet = excel.add_worksheet(sheet)
+        sheet = excel.add_worksheet(sheet, XIOWOptions(constant_memory=True, cache_typehints_write_optimization=True))
 
         acc: int = 0
         for batch in data:
@@ -50,7 +49,7 @@ def fastxlsxio_build(xlsx: str):
         print(f"fastxlsxio {sheet.name} sheet {NUM_ROWS}x{NUM_COLS} rows written for {time.monotonic() - st:.2f}")
     print(f"fastxlsxio {rows_written}x{NUM_COLS} rows written")
 
-    excel.save(xlsx)
+    excel.save()
 
 
 def xlsxwriter_build(xlsx: str):

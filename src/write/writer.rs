@@ -357,16 +357,18 @@ impl XIOWWorksheet {
                 self.col_formats_setted.resize(colidx + 1, false);
             }
 
-            let fmtflag = self.col_formats_setted[colidx];
+            let mut fmtflag = self.col_formats_setted[colidx];
             if !fmtflag && format.is_some() {
+                fmtflag = true;
                 self.col_formats_setted[colidx] = true;
-            }
-
-            worksheet = self.worksheet_refmut();
-            if !fmtflag && format.is_some() {
+                worksheet = self.worksheet_refmut();
                 worksheet
                     .set_column_format(col, format.unwrap())
                     .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            } else {
+                worksheet = self.worksheet_refmut();
+            }
+            if fmtflag {
                 cell_format = None;
             }
         } else {

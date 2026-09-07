@@ -6,12 +6,14 @@ from ._types import DShape as DShape
 from ._types import DType as DType
 from ._utils import addr_to_idx as addr_to_idx
 from ._utils import idx_to_addr as idx_to_addr
+from ._write import XIOFormat as XIOFormat
+from ._write import XIOWOptions as XIOWOptions
 from ._write import XIOWWorkbook as XIOWWorkbook
 from ._write import XIOWWorksheet as XIOWWorksheet
 
 __version__: str
 
-__all__ = [
+__all__ = (  # noqa: RUF022
     "RangeInfo",
     "XIORWorkbook",
     "XIORWorksheet",
@@ -20,7 +22,9 @@ __all__ = [
     "DType",
     "addr_to_idx",
     "idx_to_addr",
+    "XIOFormat",
+    "XIOWOptions",
     "XIOWWorkbook",
     "XIOWWorksheet",
     "__version__",
-]
+)
