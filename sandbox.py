@@ -3,7 +3,7 @@ import sys
 import time
 from itertools import batched
 
-from fastxlsxio import XIOWWorkbook
+from fastxlsxio import XIOWOptions, XIOWWorkbook
 from xlsxwriter.workbook import Workbook
 
 NUM_ROWS = 300_000
@@ -26,11 +26,12 @@ def fastxlsxio_build(xlsx: str):
     sheets = ("Sheet 3", "Sheet 1", "Sheet 2")
 
     excel = XIOWWorkbook()
+    print(excel.options)
     format_ = excel.add_format({"num_format": "0"})
     rows_written: int = 0
     for sheet in sheets:
         st = time.monotonic()
-        sheet = excel.add_worksheet(sheet, constant_memory=True)
+        sheet = excel.add_worksheet(sheet)
 
         acc: int = 0
         for batch in data:

@@ -3,6 +3,7 @@ use crate::write::pyconv::*;
 use std::borrow::Cow;
 use std::sync::LazyLock;
 
+use pyo3::exceptions::PyNotImplementedError;
 use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::exceptions::{PyFileExistsError, PyRuntimeError, PyValueError};
@@ -10,6 +11,67 @@ use pyo3::types::{PyBool, PyDate, PyDateTime, PyDict, PyFloat, PyTuple, PyList, 
 use rust_xlsxwriter::{Workbook, Worksheet, Format, ExcelDateTime, RowNum, ColNum};
 
 pub static DEFAULT_FORMAT: LazyLock<Format> = LazyLock::new(Format::default);
+
+#[pyclass(from_py_object, get_all, set_all)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct XIOWOptions {
+    pub constant_memory: bool,
+    pub cache_col_formats: bool,
+    pub cache_row_formats: bool,
+    pub cache_typehints_write_optimization: bool,
+
+}
+
+impl XIOWOptions {
+    fn default() -> Self {
+        Self {
+            constant_memory: true,
+            cache_col_formats: true,
+            cache_row_formats: false,
+            cache_typehints_write_optimization: true,
+        }
+    }
+}
+
+#[pymethods]
+impl XIOWOptions {
+
+    #[new]
+    #[pyo3(signature = (
+        constant_memory = true,
+        cache_col_formats = true,
+        cache_typehints_write_optimization = true,
+    ))]
+    pub fn new(
+        constant_memory: Option<bool>,
+        cache_col_formats: Option<bool>,
+        cache_typehints_write_optimization: Option<bool>,
+    ) -> PyResult<Self> {
+        let mut options = XIOWOptions::default();
+        if let Some(v) = constant_memory {
+            options.constant_memory = v;
+        }
+        if let Some(v) = cache_col_formats {
+            options.cache_col_formats = v;
+        }
+        if let Some(v) = cache_typehints_write_optimization {
+            options.cache_typehints_write_optimization = v;
+        }
+
+        if options.cache_row_formats {
+            return Err(PyNotImplementedError::new_err("cache_row_formats are not implemented and cannot be enabled."))
+        }
+
+        Ok(options)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "XIOWOptions(constant_memory={}, cache_col_formats={}, cache_row_formats={}, cache_typehints_write_optimization={})",
+            self.constant_memory, self.cache_col_formats, self.cache_row_formats, self.cache_typehints_write_optimization
+        )
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColTypeHint {
@@ -94,7 +156,7 @@ impl<'a> ExcelCell<'a> {
             return Ok(ExcelCell::Float(pydecimal_xlsx_format(elem)?));
         }
 
-        Err(PyValueError::new_err(format!(
+        Err(PyNotImplementedError::new_err(format!(
             "Unsupported type for Excel export: {}",
             elem.get_type().name()?
         )))
@@ -243,9 +305,10 @@ impl XIOFormat {
 #[derive(Clone)]
 pub struct XIOWWorksheet {
     worksheet: *mut Worksheet,
-    is_constant_memory: bool,
     col_hints: Vec<ColTypeHint>,
     col_formats_setted: Vec<bool>,
+    options: XIOWOptions,
+
 }
 unsafe impl Send for XIOWWorksheet {}
 unsafe impl Sync for XIOWWorksheet {}
@@ -272,42 +335,54 @@ impl XIOWWorksheet {
         format: Option<&Format>,
     ) -> PyResult<()> {
         let colidx = col as usize;
-        let cached_hint = self.col_hints.get(colidx).copied();
+        let cell: ExcelCell;
+        if self.options.cache_typehints_write_optimization {
+            let cached_hint = self.col_hints.get(colidx).copied();
 
-        let (cell, hint) = ExcelCell::from_py_hinted(value, cached_hint)?;
-        if colidx >= self.col_hints.len() {
-            self.col_hints.resize(colidx + 1, ColTypeHint::Unknown);
-        }
-        self.col_hints[colidx] = hint;
-
-        // TODO: move format caching as config option
-        if colidx >= self.col_formats_setted.len() {
-            self.col_formats_setted.resize(colidx + 1, false);
+            let hint: ColTypeHint;
+            (cell, hint) = ExcelCell::from_py_hinted(value, cached_hint)?;
+            if colidx >= self.col_hints.len() {
+                self.col_hints.resize(colidx + 1, ColTypeHint::Unknown);
+            }
+            self.col_hints[colidx] = hint;
+        } else {
+            cell = ExcelCell::from_py(value)?;
         }
         
-        let fmtflag = self.col_formats_setted[colidx];
-        if !fmtflag && format.is_some() {
-            self.col_formats_setted[colidx] = true;
+        let worksheet: &mut Worksheet;
+        let mut cell_format: Option<&Format> = format;
+        
+        if self.options.cache_col_formats {
+            if colidx >= self.col_formats_setted.len() {
+                self.col_formats_setted.resize(colidx + 1, false);
+            }
+
+            let fmtflag = self.col_formats_setted[colidx];
+            if !fmtflag && format.is_some() {
+                self.col_formats_setted[colidx] = true;
+            }
+
+            worksheet = self.worksheet_refmut();
+            if !fmtflag && format.is_some() {
+                worksheet
+                    .set_column_format(col, format.unwrap())
+                    .map_err(|e| PyValueError::new_err(e.to_string()))?;
+                cell_format = None;
+            }
+        } else {
+            worksheet = self.worksheet_refmut();
         }
 
-        let worksheet = self.worksheet_refmut();
-        if !fmtflag && format.is_some() {
-            // TODO: mb add format caching type to allow set_row_format
-            worksheet
-                .set_column_format(col, format.unwrap())
-                .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        }
-
-        cell.write(worksheet, row, col, None)
+        cell.write(worksheet, row, col, cell_format)
     }
 
-    pub fn internal_new(worksheet: &mut Worksheet, name: String, is_constant_memory: bool) -> Self {
+    pub fn internal_new(worksheet: &mut Worksheet, name: String, options: XIOWOptions) -> Self {
         let _ = worksheet.set_name(name).map_err(|e| PyValueError::new_err(e.to_string()));
         Self {
             worksheet: worksheet as *mut Worksheet, 
-            is_constant_memory: is_constant_memory, 
             col_hints: Vec::new(),
             col_formats_setted: Vec::new(),
+            options: options,
         }
     }
 }
@@ -317,12 +392,17 @@ impl XIOWWorksheet {
     
     #[getter]
     pub fn constant_memory(&self) -> bool {
-        self.is_constant_memory
+        self.options.constant_memory
     }
 
     #[getter]
     pub fn name(&self) -> String {
         self.worksheet_ref().name()
+    }
+
+    #[getter]
+    pub fn options(&self) -> XIOWOptions {
+        self.options.clone()
     }
 
     #[pyo3(signature = (row, col, value, format = None))]
@@ -416,7 +496,7 @@ impl XIOWWorksheet {
         value: &Bound<'py, PyAny>,
         format: Option<&Bound<'py, XIOFormat>>,
     ) -> PyResult<()> {
-        if self.is_constant_memory {
+        if self.options.constant_memory {
             return Err(PyRuntimeError::new_err(
                 "Cannot write columnar data in constant_memory worksheet mode",
             ));
@@ -445,6 +525,16 @@ impl XIOWWorksheet {
         Ok(())
     }
 
+    pub fn write_columns<'py>(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        value: &Bound<'py, PySequence>,
+        formats: Option<&Bound<'py, PyList>>,
+    ) -> PyResult<()> {
+        todo!();
+    }
+
     #[pyo3(signature = (first_row, first_col, last_row, last_col, value, format = None))]
     pub fn merge_range<'py>(
         &mut self,
@@ -469,17 +559,7 @@ impl XIOWWorksheet {
 
         Ok(())
     }
-
-    #[pyo3(signature = (row, col, value))]
-    pub fn write_matrix<'py>(
-        &mut self,
-        row: RowNum,
-        col: ColNum,
-        value: &Bound<'py, PyAny>,
-    ) -> PyResult<()> {
-        todo!();
-    }
-
+    
     fn __repr__(&mut self) -> String {
         format!("<XIOWWorksheet \"{}\">", self.name())
     }
@@ -490,6 +570,7 @@ pub struct XIOWWorkbook {
     filepath: Option<String>,
     workbook: Workbook,
     worksheets: Vec<XIOWWorksheet>,
+    pub options: XIOWOptions,
 }
 
 impl XIOWWorkbook {
@@ -505,13 +586,27 @@ impl XIOWWorkbook {
 impl XIOWWorkbook {
 
     #[new]
-    #[pyo3(signature = (filepath = None))]
-    fn new(filepath: Option<String>) -> Self {
+    #[pyo3(signature = (filepath = None, options = None))]
+    fn new(filepath: Option<String>, options: Option<XIOWOptions>) -> Self {
         Self {
             filepath: filepath,
             workbook: Workbook::new(),
-            worksheets: Vec::new()
+            worksheets: Vec::new(),
+            options: options.unwrap_or(XIOWOptions::default()),
         }
+    }
+
+    #[getter]
+    fn sheetnames(&mut self) -> Vec<String> {
+        self.worksheets
+            .iter()
+            .map(|ws| ws.name())
+            .collect()
+    }
+
+    #[getter]
+    pub fn options(&self) -> XIOWOptions {
+        self.options.clone()
     }
 
     #[pyo3(signature = (properties))]
@@ -519,15 +614,16 @@ impl XIOWWorkbook {
         XIOFormat::from_properties(properties)
     }
 
-    #[pyo3(signature = (name, constant_memory = false))]
-    fn add_worksheet(&mut self, name: String, constant_memory: bool) -> PyResult<XIOWWorksheet> {
-        let worksheet = if constant_memory {
+    #[pyo3(signature = (name, options = None))]
+    fn add_worksheet(&mut self, name: String, options: Option<XIOWOptions>) -> PyResult<XIOWWorksheet> {
+        let ws_options = options.unwrap_or(self.options.clone());
+        let worksheet = if ws_options.constant_memory {
             self.workbook.add_worksheet_with_constant_memory()
         } else {
             self.workbook.add_worksheet()
         };
 
-        let sheet = XIOWWorksheet::internal_new(worksheet, name, constant_memory);
+        let sheet = XIOWWorksheet::internal_new(worksheet, name, ws_options);
         self.worksheets.push(sheet.clone());
 
         Ok(sheet)
@@ -564,14 +660,6 @@ impl XIOWWorkbook {
             .ok_or_else(|| PyValueError::new_err(format!("Worksheet '{}' not found", name)))?;
 
         Ok(sheet.clone())
-    }
-
-    #[getter]
-    fn sheetnames(&mut self) -> Vec<String> {
-        self.worksheets
-            .iter()
-            .map(|ws| ws.name())
-            .collect()
     }
 
     fn __repr__(&mut self) -> String {

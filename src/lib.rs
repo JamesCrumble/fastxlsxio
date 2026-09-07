@@ -12,6 +12,8 @@ pub fn version() -> PyResult<String> {
 fn fastxlsxio(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(version, m)?)?;
 
+    m.add_class::<write::writer::XIOWOptions>()?;
+    m.add_class::<write::writer::XIOFormat>()?;
     m.add_class::<write::writer::XIOWWorkbook>()?;
     m.add_class::<write::writer::XIOWWorksheet>()?;
 

@@ -1,6 +1,31 @@
 from collections.abc import Iterable
 from typing import Any
 
+class XIOWOptions:
+    def __init__(
+        self,
+        constant_memory: bool = True,
+        cache_col_formats: bool = True,
+        cache_row_formats: bool = False,
+        cache_typehints_write_optimization: bool = True,
+    ) -> None: ...
+    @property
+    def constant_memory(self) -> bool: ...
+    @constant_memory.setter
+    def constant_memory(self, value: bool) -> None: ...
+    @property
+    def cache_col_formats(self) -> bool: ...
+    @cache_col_formats.setter
+    def cache_col_formats(self, value: bool) -> None: ...
+    @property
+    def cache_row_formats(self) -> bool: ...
+    @cache_row_formats.setter
+    def cache_row_formats(self, value: bool) -> None: ...
+    @property
+    def cache_typehints_write_optimization(self) -> bool: ...
+    @cache_typehints_write_optimization.setter
+    def cache_typehints_write_optimization(self, value: bool) -> None: ...
+
 class XIOFormat:
     @staticmethod
     def from_properties(properties: dict[str, Any]) -> XIOFormat: ...
@@ -66,8 +91,8 @@ class XIOWWorksheet:
             0-based starting column index.
         value : Iterable[Any]
             The 1D iterable of cell values to write.
-        format : list[XIOFormat] | None = None
-            values format.
+        formats : list[XIOFormat] | None = None
+            values formats.
         """
 
     def write_rows(self, row: int, col: int, value: Iterable[Iterable[Any]], formats: list[XIOFormat] | None = None) -> None:
@@ -81,8 +106,8 @@ class XIOWWorksheet:
             0-based starting column index.
         value : Iterable[Iterable[Any]]
             The 2D iterable of row values to write.
-        format : list[XIOFormat] | None = None
-            values format.
+        formats : list[XIOFormat] | None = None
+            values formats.
         """
 
     def write_column(self, row: int, col: int, value: Iterable[Any], format: XIOFormat | None = None) -> None:
@@ -100,8 +125,8 @@ class XIOWWorksheet:
             values format.
         """
 
-    def write_matrix(self, row: int, col: int, value: Iterable[Iterable[Any]]) -> None:
-        """Write a matrix of values starting from a specific cell.
+    def write_columns(self, row: int, col: int, value: Iterable[Iterable[Any]], formats: list[XIOFormat] | None = None) -> None:
+        """Write multiple columns of values starting from a specific cell.
 
         Parameters
         ----------
@@ -110,22 +135,24 @@ class XIOWWorksheet:
         col : int
             0-based starting column index.
         value : Iterable[Iterable[Any]]
-            The matrix of values to write.
+            The columns of values to write.
+        formats : list[XIOFormat] | None = None
+            values formats.
         """
 
 class XIOWWorkbook:
     """xlsxwriter workbook-like class"""
 
-    def __init__(self) -> None: ...
-    def add_worksheet(self, name: str, constant_memory: bool = False) -> XIOWWorksheet:
+    def __init__(self, filepath: str | None, options: XIOWOptions | None = None) -> None: ...
+    def add_worksheet(self, name: str, options: XIOWOptions | None = None) -> XIOWWorksheet:
         """Create a new worksheet with the specified name.
 
         Parameters
         ----------
         name : str
             The name of the new worksheet.
-        constant_memory : bool, default False
-            Enabling constant memory optimization feature.
+        options : XIOWOptions, uses default XIOWOptions
+            options which control some logic
 
         Returns
         -------
