@@ -1,7 +1,9 @@
 use std::fmt::{Write};
+
+use pyo3::ffi;
 use pyo3::exceptions::{PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDate, PyDateAccess, PyDateTime, PyFloat, PyInt, PySequence, PyTime, PyTimeAccess};
+use pyo3::types::{PyBool, PyDate, PyDateAccess, PyDateTime, PyFloat, PySequence, PyTime, PyTimeAccess, PyString};
 use rust_xlsxwriter::{ExcelDateTime};
 
 pub type XlsxInt = i32;
@@ -63,19 +65,27 @@ pub fn pyone_dimensional_iter_xlsx_format<'py>(seq: &Bound<'py, PySequence>) -> 
 
         if value.is_none() {
             continue;
-        } else if let Ok(b) = value.cast::<PyBool>() {
-            buffer.push_str(pybool_xlsx_format(&b)?);
-        } else if let Ok(f) = value.cast::<PyFloat>() {
-            let _ = write!(buffer, "{}", round3(f.value()));
-        } else if let Ok(i) = value.cast::<PyInt>() {
-            let i: XlsxInt = i.extract()?;
-            let _ = write!(buffer, "{}", i);
-        } else if let Ok(s) = value.extract::<&str>() {
-            buffer.push_str(s);
-        } else {
-            let s = value.str()?;
-            buffer.push_str(&s.to_string_lossy());
         }
+
+        let ptr = value.as_ptr();
+        unsafe {
+            if ffi::PyFloat_CheckExact(ptr) != 0 {
+                let f: &Bound<'py, PyFloat> = value.cast_unchecked();
+                let _ = write!(buffer, "{}", round3(f.value()));
+            } else if ffi::PyLong_CheckExact(ptr) != 0 && ffi::PyBool_Check(ptr) == 0 {
+                let i: XlsxInt = value.extract()?;
+                let _ = write!(buffer, "{}", i);
+            } else if ffi::PyUnicode_CheckExact(ptr) != 0 {
+                let s: &Bound<'py, PyString> = value.cast_unchecked();
+                let _ = write!(buffer, "{}", s);
+            } else if ffi::PyBool_Check(ptr) != 0 {
+                buffer.push_str(pybool_xlsx_format(&value.cast_unchecked())?);
+            } else {
+                let s = value.str()?;
+                buffer.push_str(&s.to_string_lossy());
+            }
+        }
+
     }
     Ok(buffer)
 }

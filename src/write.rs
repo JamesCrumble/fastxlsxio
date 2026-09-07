@@ -17,8 +17,12 @@ pub enum ColTypeHint {
     Int,
     String,
     Bool,
-    DateTime,
     Blank,
+
+    // unsupported fast convertions
+    DateTime,
+    Sequence,
+
     Unknown,
 }
 
@@ -30,6 +34,7 @@ impl ColTypeHint {
             ExcelCell::String(_) => ColTypeHint::String,
             ExcelCell::Bool(_) => ColTypeHint::Bool,
             ExcelCell::DateTime(_) => ColTypeHint::DateTime,
+            ExcelCell::Sequence(_) => ColTypeHint::Sequence,            
             ExcelCell::Blank => ColTypeHint::Blank,
         }
     }
@@ -41,6 +46,7 @@ pub enum ExcelCell<'a> {
     Int(XlsxInt),
     Bool(bool),
     DateTime(ExcelDateTime),
+    Sequence(String),
     Blank,
 }
 
@@ -81,6 +87,9 @@ impl<'a> ExcelCell<'a> {
         if let Ok(t) = elem.cast::<PyTime>() {
             return Ok(ExcelCell::DateTime(pytime_xlsx_format(t)?));
         }
+        if let Ok(t) = elem.cast::<PySequence>() {
+            return Ok(ExcelCell::Sequence(pyone_dimensional_iter_xlsx_format(t)?));
+        }
         if elem.get_type().name()? == "Decimal" {
             return Ok(ExcelCell::Float(pydecimal_xlsx_format(elem)?));
         }
@@ -91,39 +100,28 @@ impl<'a> ExcelCell<'a> {
         )))
     }
 
-    pub fn from_py_hinted(elem: &'a Bound<'a, PyAny>, hint: Option<ColTypeHint>,) -> PyResult<(Self, ColTypeHint)> {
+    pub fn from_py_hinted(elem: &'a Bound<'a, PyAny>, hint: Option<ColTypeHint>) -> PyResult<(Self, ColTypeHint)> {
         if let Some(h) = hint {
-            let ptr = elem.as_ptr();
+            if elem.is_none() {
+                return Ok((ExcelCell::Blank, ColTypeHint::Blank));
+            }
             unsafe {
                 match h {
                     ColTypeHint::Float => {
-                        if ffi::PyFloat_CheckExact(ptr) != 0 {
-                            let f: &Bound<'a, PyFloat> = elem.cast_unchecked();
-                            return Ok((ExcelCell::Float(f.value()), ColTypeHint::Float));
-                        }
+                        let f: &Bound<'a, PyFloat> = elem.cast_unchecked();
+                        return Ok((ExcelCell::Float(f.value()), ColTypeHint::Float));
                     }
                     ColTypeHint::Int => {
-                        if ffi::PyLong_CheckExact(ptr) != 0 && ffi::PyBool_Check(ptr) == 0 {
-                            let val: XlsxInt = elem.extract()?;
-                            return Ok((ExcelCell::Int(val), ColTypeHint::Int));
-                        }
+                        let i: XlsxInt = elem.extract()?;
+                        return Ok((ExcelCell::Int(i), ColTypeHint::Int));
                     }
                     ColTypeHint::String => {
-                        if ffi::PyUnicode_CheckExact(ptr) != 0 {
-                            let s: &Bound<'a, PyString> = elem.cast_unchecked();
-                            return Ok((ExcelCell::String(Cow::Borrowed(s.to_str()?)), ColTypeHint::String));
-                        }
+                        let s: &Bound<'a, PyString> = elem.cast_unchecked();
+                        return Ok((ExcelCell::String(Cow::Borrowed(s.to_str()?)), ColTypeHint::String));
                     }
                     ColTypeHint::Bool => {
-                        if ffi::PyBool_Check(ptr) != 0 {
-                            let b: &Bound<'a, PyBool> = elem.cast_unchecked();
-                            return Ok((ExcelCell::Bool(b.is_true()), ColTypeHint::Bool));
-                        }
-                    }
-                    ColTypeHint::Blank => {
-                        if elem.is_none() {
-                            return Ok((ExcelCell::Blank, ColTypeHint::Blank));
-                        }
+                        let b: &Bound<'a, PyBool> = elem.cast_unchecked();
+                        return Ok((ExcelCell::Bool(b.is_true()), ColTypeHint::Bool));
                     }
                     _ => {}
                 }
@@ -147,15 +145,17 @@ impl<'a> ExcelCell<'a> {
             (ExcelCell::Blank, None) => Ok(worksheet),
             (ExcelCell::Int(n), None) => worksheet.write_number(row, col, *n),
             (ExcelCell::Float(n), None) => worksheet.write_number(row, col, *n),
-            (ExcelCell::Bool(b), None) => worksheet.write_boolean(row, col, *b),
+            (ExcelCell::Bool(b), None) => {worksheet.write_boolean(row, col, *b)},
             (ExcelCell::DateTime(dt), None) => worksheet.write_datetime(row, col, dt),
-
+            (ExcelCell::Sequence(s), None) => worksheet.write_string(row, col, s),
+            
             (ExcelCell::String(s), Some(fmt)) => worksheet.write_string_with_format(row, col, s.as_ref(), fmt),
             (ExcelCell::Blank, Some(fmt)) => worksheet.write_blank(row, col, fmt),
             (ExcelCell::Int(n), Some(fmt)) => worksheet.write_number_with_format(row, col, *n, fmt),
             (ExcelCell::Float(n), Some(fmt)) => worksheet.write_number_with_format(row, col, *n, fmt),
             (ExcelCell::Bool(b), Some(fmt)) => worksheet.write_boolean_with_format(row, col, *b, fmt),
             (ExcelCell::DateTime(dt), Some(fmt)) => worksheet.write_datetime_with_format(row, col, dt, fmt),
+            (ExcelCell::Sequence(s), Some(fmt)) => worksheet.write_string_with_format(row, col, s, fmt),
         };
 
         res.map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -263,7 +263,6 @@ impl XIOWorksheet {
         unsafe { &mut *self.worksheet }
     }
 
-    #[inline(always)]
     fn _write_cell_rs(
         &mut self,
         row: RowNum,
@@ -280,23 +279,11 @@ impl XIOWorksheet {
         }
         self.col_hints[hint_idx] = hint;
 
-
         cell.write(self.worksheet_refmut(), row, col, format)
     }
 
-    fn _write_cell(
-        &mut self,
-        row: RowNum,
-        col: ColNum,
-        value: &Bound<'_, PyAny>,
-        format: Option<&Bound<'_, XIOFormat>>,
-    ) -> PyResult<()> {
-        unpack_format!(format, rs_format);
-        self._write_cell_rs(row, col, value, rs_format)
-    }
-
     pub fn internal_new(worksheet: &mut Worksheet, name: String, is_constant_memory: bool) -> Self {
-        let _ = worksheet.set_name(name);
+        let _ = worksheet.set_name(name).map_err(|e| PyValueError::new_err(e.to_string()));
         Self {
             worksheet: worksheet as *mut Worksheet, 
             is_constant_memory: is_constant_memory, 
@@ -326,7 +313,8 @@ impl XIOWorksheet {
         value: &Bound<'py, PyAny>,
         format: Option<&Bound<'py, XIOFormat>>,
     ) -> PyResult<()> {
-        self._write_cell(row, col, value, format)
+        unpack_format!(format, rs_format);
+        self._write_cell_rs(row, col, value, rs_format)
     }
 
     #[pyo3(signature = (row, col, value, formats = None))]
@@ -518,10 +506,6 @@ impl XIOWorkbook {
         } else {
             self.workbook.add_worksheet()
         };
-
-        worksheet
-            .set_name(&name)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
         let sheet = XIOWorksheet::internal_new(worksheet, name, constant_memory);
         self.worksheets.push(sheet.clone());
