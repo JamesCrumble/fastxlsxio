@@ -6,8 +6,12 @@ class ColTypeHint:
     for column type-hint caching and as the key for type-bound default
     formats registered via `XIOWWorkbook.add_format(..., bind_to_datatype=...)`.
 
-    `Unknown` is an internal placeholder for not-yet-seen columns and cannot
-    be used as a `bind_to_datatype` value.
+    `Unknown` and `Dynamic` are internal placeholders and cannot be used as
+    a `bind_to_datatype` value:
+    - `Unknown` marks a column that hasn't been written to yet.
+    - `Dynamic` marks a column that turned out to hold mixed types — the
+      fast type-hint path is disabled for it, every write is classified
+      from scratch.
     """
 
     Float: ClassVar[ColTypeHint]
@@ -20,6 +24,7 @@ class ColTypeHint:
     DateTime: ClassVar[ColTypeHint]
     Sequence: ClassVar[ColTypeHint]
     Unknown: ClassVar[ColTypeHint]
+    Dynamic: ClassVar[ColTypeHint]
     def __eq__(self, other: object) -> bool: ...
     def __int__(self) -> int: ...
     def __hash__(self) -> int: ...

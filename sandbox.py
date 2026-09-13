@@ -12,7 +12,7 @@ NUM_COLS = 20
 
 def data_():
     for _ in range(NUM_ROWS):
-        yield {v: v * 100 if v % 2 == 0 else v / 1 for v in range(NUM_COLS)}
+        yield {v: f"{v * 1000}" if v % 2 == 0 else v / 1 for v in range(NUM_COLS)}
 
 
 def data_by_batch():

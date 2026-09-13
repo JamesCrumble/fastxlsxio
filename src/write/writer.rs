@@ -19,7 +19,6 @@ pub struct XIOWOptions {
     pub cache_col_formats: bool,
     pub cache_row_formats: bool,
     pub cache_typehints_write_optimization: bool,
-
 }
 
 impl XIOWOptions {
@@ -40,11 +39,13 @@ impl XIOWOptions {
     #[pyo3(signature = (
         constant_memory = true,
         cache_col_formats = true,
+        cache_row_formats = false,
         cache_typehints_write_optimization = true,
     ))]
     pub fn new(
         constant_memory: Option<bool>,
         cache_col_formats: Option<bool>,
+        cache_row_formats: Option<bool>,
         cache_typehints_write_optimization: Option<bool>,
     ) -> PyResult<Self> {
         let mut options = XIOWOptions::default();
@@ -53,6 +54,9 @@ impl XIOWOptions {
         }
         if let Some(v) = cache_col_formats {
             options.cache_col_formats = v;
+        }
+        if let Some(v) = cache_row_formats {
+            options.cache_row_formats = v;
         }
         if let Some(v) = cache_typehints_write_optimization {
             options.cache_typehints_write_optimization = v;
@@ -89,10 +93,14 @@ pub enum ColTypeHint {
     Sequence,
 
     Unknown,
+    // Cached hint got proven wrong for some row in this column — it's
+    // heterogeneous. Fast-path hinting is permanently disabled for it;
+    // every write goes through the full `ExcelCell::from_py` path.
+    Dynamic,
 }
 
 impl ColTypeHint {
-    pub const COUNT: usize = 9;
+    pub const COUNT: usize = 11;
 
     // Explicit match instead of `as usize` cast on the discriminant —
     // stays correct even if variants get reordered later.
@@ -108,6 +116,7 @@ impl ColTypeHint {
             ColTypeHint::DateTime => 7,
             ColTypeHint::Sequence => 8,
             ColTypeHint::Unknown => 9,
+            ColTypeHint::Dynamic => 10,
         }
     }
 
@@ -120,7 +129,7 @@ impl ColTypeHint {
             ExcelCell::Date(_) => ColTypeHint::Date,
             ExcelCell::Time(_) => ColTypeHint::Time,
             ExcelCell::DateTime(_) => ColTypeHint::DateTime,
-            ExcelCell::Sequence(_) => ColTypeHint::Sequence,            
+            ExcelCell::Sequence(_) => ColTypeHint::Sequence,
             ExcelCell::Blank => ColTypeHint::Blank,
         }
     }
@@ -190,28 +199,63 @@ impl<'a> ExcelCell<'a> {
 
     pub fn from_py_hinted(elem: &'a Bound<'a, PyAny>, hint: Option<&ColTypeHint>) -> PyResult<(Self, ColTypeHint)> {
         if let Some(h) = hint {
+            if *h == ColTypeHint::Dynamic {
+                let cell = Self::from_py(elem)?;
+                return Ok((cell, ColTypeHint::Dynamic));
+            }
+
             if elem.is_none() {
                 return Ok((ExcelCell::Blank, ColTypeHint::Blank));
             }
-            unsafe {
-                match h {
-                    ColTypeHint::Float => {
-                        let f: &Bound<'a, PyFloat> = elem.cast_unchecked();
-                        return Ok((ExcelCell::Float(f.value()), ColTypeHint::Float));
+
+            let has_fast_path = matches!(
+                h,
+                ColTypeHint::Float
+                    | ColTypeHint::Int
+                    | ColTypeHint::String
+                    | ColTypeHint::Bool
+                    | ColTypeHint::Date
+                    | ColTypeHint::Time
+                    | ColTypeHint::DateTime
+            );
+
+            if has_fast_path {
+                let ptr = elem.as_ptr();
+                unsafe {
+                    match h {
+                        ColTypeHint::Float if ffi::PyFloat_CheckExact(ptr) != 0 => {
+                            let f: &Bound<'a, PyFloat> = elem.cast_unchecked();
+                            return Ok((ExcelCell::Float(f.value()), ColTypeHint::Float));
+                        }
+                        ColTypeHint::Int if ffi::PyLong_CheckExact(ptr) != 0 && ffi::PyBool_Check(ptr) == 0 => {
+                            let i: XlsxInt = elem.extract()?;
+                            return Ok((ExcelCell::Int(i), ColTypeHint::Int));
+                        }
+                        ColTypeHint::String if ffi::PyUnicode_CheckExact(ptr) != 0 => {
+                            let s: &Bound<'a, PyString> = elem.cast_unchecked();
+                            return Ok((ExcelCell::String(Cow::Borrowed(s.to_str()?)), ColTypeHint::String));
+                        }
+                        ColTypeHint::Bool if ffi::PyBool_Check(ptr) != 0 => {
+                            let b: &Bound<'a, PyBool> = elem.cast_unchecked();
+                            return Ok((ExcelCell::Bool(b.is_true()), ColTypeHint::Bool));
+                        }
+                        ColTypeHint::Date if ffi::PyDate_CheckExact(ptr) != 0 => {
+                            let d: &Bound<'a, PyDate> = elem.cast_unchecked();
+                            return Ok((ExcelCell::Date(pydate_xlsx_format(d)?), ColTypeHint::Date));
+                        }
+                        ColTypeHint::Time if ffi::PyTime_CheckExact(ptr) != 0 => {
+                            let t: &Bound<'a, PyTime> = elem.cast_unchecked();
+                            return Ok((ExcelCell::Time(pytime_xlsx_format(t)?), ColTypeHint::Time));
+                        }
+                        ColTypeHint::DateTime if ffi::PyDateTime_CheckExact(ptr) != 0 => {
+                            let dt: &Bound<'a, PyDateTime> = elem.cast_unchecked();
+                            return Ok((ExcelCell::DateTime(pydatetime_xlsx_format(dt)?), ColTypeHint::DateTime));
+                        }
+                        _ => {
+                            let cell = Self::from_py(elem)?;
+                            return Ok((cell, ColTypeHint::Dynamic));
+                        }
                     }
-                    ColTypeHint::Int => {
-                        let i: XlsxInt = elem.extract()?;
-                        return Ok((ExcelCell::Int(i), ColTypeHint::Int));
-                    }
-                    ColTypeHint::String => {
-                        let s: &Bound<'a, PyString> = elem.cast_unchecked();
-                        return Ok((ExcelCell::String(Cow::Borrowed(s.to_str()?)), ColTypeHint::String));
-                    }
-                    ColTypeHint::Bool => {
-                        let b: &Bound<'a, PyBool> = elem.cast_unchecked();
-                        return Ok((ExcelCell::Bool(b.is_true()), ColTypeHint::Bool));
-                    }
-                    _ => {}
                 }
             }
         }
@@ -699,9 +743,9 @@ impl XIOWWorkbook {
         let format = XIOFormat::from_properties(properties)?;
 
         if let Some(hint) = bind_to_datatype {
-            if hint == ColTypeHint::Unknown {
+            if matches!(hint, ColTypeHint::Unknown | ColTypeHint::Dynamic) {
                 return Err(PyValueError::new_err(
-                    "Cannot bind a format to ColTypeHint.Unknown — it's an internal placeholder, not a real cell type",
+                    "Cannot bind a format to ColTypeHint.Unknown or ColTypeHint.Dynamic — they're internal placeholders, not real cell types",
                 ));
             }
             self.datatype_format_bindings[hint.as_index()] = Some(format.rs_format.clone());
