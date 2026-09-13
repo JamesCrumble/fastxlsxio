@@ -73,6 +73,7 @@ impl XIOWOptions {
     }
 }
 
+#[pyclass(from_py_object, eq, eq_int)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColTypeHint {
     Float,
@@ -89,6 +90,23 @@ pub enum ColTypeHint {
 }
 
 impl ColTypeHint {
+    pub const COUNT: usize = 8;
+
+    // Explicit match instead of `as usize` cast on the discriminant —
+    // stays correct even if variants get reordered later.
+    fn as_index(self) -> usize {
+        match self {
+            ColTypeHint::Float => 0,
+            ColTypeHint::Int => 1,
+            ColTypeHint::String => 2,
+            ColTypeHint::Bool => 3,
+            ColTypeHint::Blank => 4,
+            ColTypeHint::DateTime => 5,
+            ColTypeHint::Sequence => 6,
+            ColTypeHint::Unknown => 7,
+        }
+    }
+
     pub fn from_excel_cell(cell: &ExcelCell) -> Self {
         match cell {
             ExcelCell::Float(_) => ColTypeHint::Float,
@@ -309,7 +327,7 @@ pub struct XIOWWorksheet {
     col_formats_setted: Vec<Option<Format>>,
     row_formats_setted: Vec<Option<Format>>,
     options: XIOWOptions,
-
+    datatype_format_bindings: *const [Option<Format>; ColTypeHint::COUNT],
 }
 unsafe impl Send for XIOWWorksheet {}
 unsafe impl Sync for XIOWWorksheet {}
@@ -372,6 +390,14 @@ impl XIOWWorksheet {
             ExcelCell::from_py(value)?
         };
 
+        let format = match format {
+            Some(f) => Some(f),
+            None => {
+                let hint = ColTypeHint::from_excel_cell(&cell);
+                unsafe { (*self.datatype_format_bindings)[hint.as_index()].as_ref() }
+            }
+        };
+
         let (should_be_set, cell_format) = if self.options.cache_col_formats {
             resolve_format_cache(&mut self.col_formats_setted, colidx, format)
         } else if self.options.cache_row_formats {
@@ -397,14 +423,20 @@ impl XIOWWorksheet {
         cell.write(worksheet, row, col, cell_format)
     }
 
-    pub fn internal_new(worksheet: &mut Worksheet, name: String, options: XIOWOptions) -> Self {
+    pub fn internal_new(
+        worksheet: &mut Worksheet, 
+        name: String, 
+        options: XIOWOptions, 
+        datatype_format_bindings: *const [Option<Format>; ColTypeHint::COUNT],
+    ) -> Self {
         let _ = worksheet.set_name(name).map_err(|e| PyValueError::new_err(e.to_string()));
         Self {
-            worksheet: worksheet as *mut Worksheet, 
+            worksheet: worksheet as *mut Worksheet,
             col_hints: Vec::new(),
             row_formats_setted: Vec::new(),
             col_formats_setted: Vec::new(),
-            options: options,
+            options,
+            datatype_format_bindings,
         }
     }
 }
@@ -610,6 +642,7 @@ pub struct XIOWWorkbook {
     workbook: Workbook,
     worksheets: Vec<XIOWWorksheet>,
     pub options: XIOWOptions,
+    datatype_format_bindings: Box<[Option<Format>; ColTypeHint::COUNT]>,
 }
 
 impl XIOWWorkbook {
@@ -632,6 +665,7 @@ impl XIOWWorkbook {
             workbook: Workbook::new(),
             worksheets: Vec::new(),
             options: options.unwrap_or(XIOWOptions::default()),
+            datatype_format_bindings: Box::new(std::array::from_fn(|_| None)),
         }
     }
 
@@ -648,9 +682,20 @@ impl XIOWWorkbook {
         self.options.clone()
     }
 
-    #[pyo3(signature = (properties))]
-    fn add_format<'py>(&self, properties: &Bound<'py, PyDict>) -> PyResult<XIOFormat> {
-        XIOFormat::from_properties(properties)
+    #[pyo3(signature = (properties, bind_to_datatype = None))]
+    fn add_format<'py>(&mut self, properties: &Bound<'py, PyDict>, bind_to_datatype: Option<ColTypeHint>) -> PyResult<XIOFormat> {
+        let format = XIOFormat::from_properties(properties)?;
+
+        if let Some(hint) = bind_to_datatype {
+            if hint == ColTypeHint::Unknown {
+                return Err(PyValueError::new_err(
+                    "Cannot bind a format to ColTypeHint.Unknown — it's an internal placeholder, not a real cell type",
+                ));
+            }
+            self.datatype_format_bindings[hint.as_index()] = Some(format.rs_format.clone());
+        }
+
+        Ok(format)
     }
 
     #[pyo3(signature = (name, options = None))]
@@ -662,7 +707,12 @@ impl XIOWWorkbook {
             self.workbook.add_worksheet()
         };
 
-        let sheet = XIOWWorksheet::internal_new(worksheet, name, ws_options);
+        let sheet = XIOWWorksheet::internal_new(
+            worksheet,
+            name,
+            ws_options,
+            self.datatype_format_bindings.as_ref() as *const _,
+        );
         self.worksheets.push(sheet.clone());
 
         Ok(sheet)

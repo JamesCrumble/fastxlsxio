@@ -1,5 +1,26 @@
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, ClassVar
+
+class ColTypeHint:
+    """Classifier of the Python value written into a cell, used internally
+    for column type-hint caching and as the key for type-bound default
+    formats registered via `XIOWWorkbook.add_format(..., bind_to_datatype=...)`.
+
+    `Unknown` is an internal placeholder for not-yet-seen columns and cannot
+    be used as a `bind_to_datatype` value.
+    """
+
+    Float: ClassVar[ColTypeHint]
+    Int: ClassVar[ColTypeHint]
+    String: ClassVar[ColTypeHint]
+    Bool: ClassVar[ColTypeHint]
+    Blank: ClassVar[ColTypeHint]
+    DateTime: ClassVar[ColTypeHint]
+    Sequence: ClassVar[ColTypeHint]
+    Unknown: ClassVar[ColTypeHint]
+    def __eq__(self, other: object) -> bool: ...
+    def __int__(self) -> int: ...
+    def __hash__(self) -> int: ...
 
 class XIOWOptions:
     """
@@ -219,7 +240,11 @@ class XIOWWorkbook:
         XIOWWorksheet
             The newly created worksheet.
         """
-    def add_format(self, properties: dict[str, Any]) -> XIOFormat:
+    def add_format(
+        self,
+        properties: dict[str, Any],
+        bind_to_datatype: ColTypeHint | None = None,
+    ) -> XIOFormat:
         """Adds format to workbook
 
         Parameters
@@ -229,6 +254,12 @@ class XIOWWorkbook:
                 format for numbers
             "bold" : bool
                 set or unset bold to text. By default is False so True is only logical value here
+        bind_to_datatype : ColTypeHint | None = None
+            When provided, this format becomes the default for every cell of
+            that type written afterwards (in this and any worksheet created
+            after this call) that isn't given an explicit `format`. Calling
+            this again with the same `bind_to_datatype` replaces the
+            previously bound format. Raises ValueError for `ColTypeHint.Unknown`.
 
         Returns
         -------

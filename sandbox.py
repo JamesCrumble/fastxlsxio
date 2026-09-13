@@ -3,7 +3,7 @@ import sys
 import time
 from itertools import batched
 
-from fastxlsxio import XIOWOptions, XIOWWorkbook
+from fastxlsxio import ColTypeHint, XIOWOptions, XIOWWorkbook
 from xlsxwriter.workbook import Workbook
 
 NUM_ROWS = 300_000
@@ -12,7 +12,7 @@ NUM_COLS = 20
 
 def data_():
     for _ in range(NUM_ROWS):
-        yield {v: v * 100 for v in range(NUM_COLS)}
+        yield {v: v * 100 if v % 2 == 0 else v / 1 for v in range(NUM_COLS)}
 
 
 def data_by_batch():
@@ -26,7 +26,8 @@ def fastxlsxio_build(xlsx: str):
     sheets = ("Sheet 3", "Sheet 1", "Sheet 2")
 
     excel = XIOWWorkbook(xlsx)
-    format_ = excel.add_format({"num_format": "###.0"})
+    excel.add_format({"num_format": "###.0"}, bind_to_datatype=ColTypeHint.Int)
+    excel.add_format({"num_format": "###.123"}, bind_to_datatype=ColTypeHint.Float)
     rows_written: int = 0
     for sheet in sheets:
         st = time.monotonic()
@@ -34,8 +35,6 @@ def fastxlsxio_build(xlsx: str):
 
         acc: int = 0
 
-        for i in range(20):
-            sheet.set_column_format(i + 1, format_)
         for batch in data:
             for row in batch:
                 sheet.write_row(acc, 0, row)

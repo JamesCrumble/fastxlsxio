@@ -6,6 +6,7 @@ from ._types import DShape as DShape
 from ._types import DType as DType
 from ._utils import addr_to_idx as addr_to_idx
 from ._utils import idx_to_addr as idx_to_addr
+from ._write import ColTypeHint as ColTypeHint
 from ._write import XIOFormat as XIOFormat
 from ._write import XIOWOptions as XIOWOptions
 from ._write import XIOWWorkbook as XIOWWorkbook
@@ -22,6 +23,7 @@ __all__ = (  # noqa: RUF022
     "DType",
     "addr_to_idx",
     "idx_to_addr",
+    "ColTypeHint",
     "XIOFormat",
     "XIOWOptions",
     "XIOWWorkbook",

@@ -16,6 +16,7 @@ fn fastxlsxio(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<write::writer::XIOFormat>()?;
     m.add_class::<write::writer::XIOWWorkbook>()?;
     m.add_class::<write::writer::XIOWWorksheet>()?;
+    m.add_class::<write::writer::ColTypeHint>()?;
 
     m.add_class::<read::types::DType>()?;
     m.add_class::<read::types::DShape>()?;
