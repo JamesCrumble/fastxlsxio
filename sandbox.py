@@ -75,7 +75,7 @@ def xlsxwriter_build(xlsx: str):
     excel.close()
 
 
-async def main_():
+async def main():
     print("Start fastxlsxio")
     st = time.monotonic()
     fastxlsxio_build("fastxlsxio_build.xlsx")
@@ -87,15 +87,15 @@ async def main_():
     print(f"write for {time.monotonic() - st:.2f} xlsxwriter")
 
 
-async def main():
-    wb = XIOWWorkbook(options=XIOWOptions(cache_col_formats=True))
-    ws = wb.add_worksheet("test")
-    firstf = wb.add_format({"num_format": "###00.0"})
-    secondf = wb.add_format({"num_format": "###00"})
-    ws.write_cell(0, 0, 123, firstf)
-    ws.write_cell(1, 0, 123, secondf)
+# async def main():
+#     wb = XIOWWorkbook(options=XIOWOptions(cache_col_formats=True))
+#     ws = wb.add_worksheet("test")
+#     firstf = wb.add_format({"num_format": "###00.0"})
+#     secondf = wb.add_format({"num_format": "###00"})
+#     ws.write_cell(0, 0, 123, firstf)
+#     ws.write_cell(1, 0, 123, secondf)
 
-    wb.save("test_row_different_col_format_with_cache.xlsx")
+#     wb.save("test_row_different_col_format_with_cache.xlsx")
 
 
 if __name__ == "__main__":

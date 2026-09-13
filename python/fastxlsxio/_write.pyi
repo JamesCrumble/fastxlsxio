@@ -2,6 +2,15 @@ from collections.abc import Iterable
 from typing import Any
 
 class XIOWOptions:
+    """
+    `constant_memory` - flush buffer on disk. Chaotic writes are not allowed. More info in rust_xlsxwriter doc.\n
+    `cache_typehints_write_optimization` - Expected to have static data types on columns. Only nullable allowed
+
+    `cache_col_formats` - cache cells format upon columns\n
+    `cache_row_formats` - cache cells format upon rows\n
+    P.S. Both values `cache_col_formats` and `cache_row_formats` should not be used at the same time due prioritized col branching\n
+    """
+
     def __init__(
         self,
         constant_memory: bool = True,

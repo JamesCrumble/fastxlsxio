@@ -1,8 +1,6 @@
 use crate::write::pyconv::*;
 
 use std::borrow::Cow;
-use std::ptr::null;
-use std::ptr::null_mut;
 use std::sync::LazyLock;
 
 use pyo3::exceptions::PyNotImplementedError;
