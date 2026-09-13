@@ -394,7 +394,6 @@ impl XIOWWorksheet {
                     .map_err(|e| PyValueError::new_err(e.to_string()))?;
             }
         }
-
         cell.write(worksheet, row, col, cell_format)
     }
 
@@ -551,7 +550,6 @@ impl XIOWWorksheet {
     #[pyo3(signature = (first_row, first_col, last_row, last_col, value, format = None))]
     pub fn merge_range<'py>(
         &mut self,
-        py: Python<'py>,
         first_row: RowNum,
         first_col: ColNum,
         last_row: RowNum,
@@ -565,10 +563,8 @@ impl XIOWWorksheet {
         let py_str = value.str()?; 
         let rust_str: &str = py_str.to_str()?;
 
-        py.detach(|| {
-            worksheet.merge_range(first_row, first_col, last_row, last_col, rust_str, rs_format.unwrap_or(&DEFAULT_FORMAT))
-        })
-        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        worksheet.merge_range(first_row, first_col, last_row, last_col, rust_str, rs_format.unwrap_or(&DEFAULT_FORMAT))
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
         Ok(())
     }
@@ -580,6 +576,26 @@ impl XIOWWorksheet {
         width: XlsxFloat
     ) -> PyResult<()> {
         self.worksheet_refmut().set_column_width(col, width).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(())
+    }
+
+    #[pyo3(signature = (col, format))]
+    fn set_column_format<'py>(&mut self, col: ColNum, format: &Bound<'py, XIOFormat>) -> PyResult<()> {
+        unpack_format!(Some(format), rs_format);
+        if self.options.cache_col_formats {
+            resolve_format_cache(&mut self.col_formats_setted, col as usize, rs_format);
+        }
+        self.worksheet_refmut().set_column_format(col, rs_format.unwrap()).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(())
+    }
+
+    #[pyo3(signature = (row, format))]
+    fn set_row_format<'py>(&mut self, row: RowNum, format: &Bound<'py, XIOFormat>) -> PyResult<()> {
+        unpack_format!(Some(format), rs_format);
+        if self.options.cache_row_formats {
+            resolve_format_cache(&mut self.row_formats_setted, row as usize, rs_format);
+        }
+        self.worksheet_refmut().set_row_format(row, rs_format.unwrap()).map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(())
     }
     

@@ -33,11 +33,14 @@ def fastxlsxio_build(xlsx: str):
         sheet = excel.add_worksheet(sheet, XIOWOptions(constant_memory=True, cache_typehints_write_optimization=True))
 
         acc: int = 0
+
+        for i in range(20):
+            sheet.set_column_format(i + 1, format_)
         for batch in data:
             for row in batch:
-                # sheet.write_row(acc, 0, row)
-                for j, value in enumerate(row.values()):
-                    sheet.write_cell(acc, j, value, format_)
+                sheet.write_row(acc, 0, row)
+                # for j, value in enumerate(row.values()):
+                #     sheet.write_cell(acc, j, value, format_)
                 acc += 1
 
         # for i, batch in enumerate(data):

@@ -163,6 +163,43 @@ class XIOWWorksheet:
 
         """
 
+    def set_column_format(self, col: int, format: XIOFormat) -> None:
+        """
+        Set the format for a column of cells.
+
+        The `set_column_format()` method is used to change the default format of a
+        column. Any unformatted data written to that column will then adopt that
+        format. Formatted data written to the column will maintain its own cell
+        format. See the example below.
+
+        A future version of this library may support automatic merging of
+        explicit cell formatting with the column formatting but that isn't
+        currently supported.
+
+        # Parameters
+
+        - `col`: The zero indexed column number.
+        - `format`: The [`XIOFormat`] property for the cell.
+        """
+    def set_row_format(self, row: int, format: XIOFormat) -> None:
+        """
+        Set the format for a row of cells.
+
+        The `set_row_format()` method is used to change the default format of a
+        row. Any unformatted data written to that row will then adopt that
+        format. Formatted data written to the row will maintain its own cell
+        format. See the example below.
+
+        A future version of this library may support automatic merging of
+        explicit cell formatting with the row formatting but that isn't
+        currently supported.
+
+        # Parameters
+
+        - `row`: The zero indexed row number.
+        - `format`: The [`XIOFormat`] property for the cell.
+        """
+
 class XIOWWorkbook:
     """xlsxwriter workbook-like class"""
 
