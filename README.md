@@ -8,7 +8,7 @@
 ### 🚫 Current Limitations
 
 - **File Formats**: Only XLSX (no XLS/XLSB support).
-- **Formulas & Styling**: Cell formulas, merged cells, and formatting not supported.
+- **Formulas & Styling**: Cell formulas not supported. (merge cells and formats supported only for write ops)
 - **Modifications**: Append/update operations on existing files unavailable.
 - **Advanced Features**: Charts, images, and other advanced features not supported.
 
