@@ -579,20 +579,11 @@ impl XIOWWorksheet {
         value: &Bound<'py, PySequence>,
         formats: Option<&Bound<'py, PyList>>,
     ) -> PyResult<()> {
-        unpack_formats!(formats, rs_formats);
-        
         let rows_iter = value.try_iter()?;
         for (r_offset, row_obj_res) in rows_iter.enumerate() {
             let row_obj = row_obj_res?;
             let current_row = row + r_offset as RowNum;
-
-            for (c_offset, cell_obj_res) in row_obj.try_iter()?.enumerate() {
-                let cell_obj = cell_obj_res?;
-                let current_col = col + c_offset as ColNum;
-
-                extract_format_by_offset!(rs_formats, c_offset, rs_format);
-                self._write_cell_rs(current_row, current_col, &cell_obj, rs_format)?;
-            }
+            self.write_row(current_row, col, &row_obj, formats)?;
         }
 
         Ok(())

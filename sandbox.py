@@ -7,12 +7,12 @@ from fastxlsxio import ColTypeHint, XIOWOptions, XIOWWorkbook
 from xlsxwriter.workbook import Workbook
 
 NUM_ROWS = 300_000
-NUM_COLS = 20
+NUM_COLS = 2
 
 
 def data_():
     for _ in range(NUM_ROWS):
-        yield {v: f"{v * 1000}" if v % 2 == 0 else v / 1 for v in range(NUM_COLS)}
+        yield {f"key: {v}": f"{v * 1000}" if v % 2 == 0 else v / 1 for v in range(NUM_COLS)}
 
 
 def data_by_batch():
@@ -35,16 +35,16 @@ def fastxlsxio_build(xlsx: str):
 
         acc: int = 0
 
-        for batch in data:
-            for row in batch:
-                sheet.write_row(acc, 0, row)
-                # for j, value in enumerate(row.values()):
-                #     sheet.write_cell(acc, j, value, format_)
-                acc += 1
+        # for batch in data:
+        #     for row in batch:
+        #         sheet.write_row(acc, 0, row)
+        #         # for j, value in enumerate(row.values()):
+        #         #     sheet.write_cell(acc, j, value, format_)
+        #         acc += 1
 
-        # for i, batch in enumerate(data):
-        #     sheet.write_rows(i * len(batch), 0, batch)
-        #     rows_written += len(batch)
+        for i, batch in enumerate(data):
+            sheet.write_rows(i * len(batch), 0, batch)
+            rows_written += len(batch)
 
         rows_written += acc
 
