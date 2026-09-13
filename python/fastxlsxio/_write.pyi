@@ -140,6 +140,20 @@ class XIOWWorksheet:
             values formats.
         """
 
+    def set_column_width(self, col: int, width: float) -> bool:
+        """
+        Set the width of a single column
+
+        Args:
+            col:   First column (zero-indexed).
+            width: Column width.
+
+        Returns:
+            0:  Success.
+            -1: Column number is out of worksheet bounds.
+
+        """
+
 class XIOWWorkbook:
     """xlsxwriter workbook-like class"""
 

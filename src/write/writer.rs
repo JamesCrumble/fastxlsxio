@@ -1,6 +1,8 @@
 use crate::write::pyconv::*;
 
 use std::borrow::Cow;
+use std::ptr::null;
+use std::ptr::null_mut;
 use std::sync::LazyLock;
 
 use pyo3::exceptions::PyNotImplementedError;
@@ -58,8 +60,8 @@ impl XIOWOptions {
             options.cache_typehints_write_optimization = v;
         }
 
-        if options.cache_row_formats {
-            return Err(PyNotImplementedError::new_err("cache_row_formats are not implemented and cannot be enabled."))
+        if options.cache_row_formats && options.cache_col_formats {
+            return Err(PyValueError::new_err("Recommended to not use both of caches. Col cache is prioritized in branching even if both enabled"))
         }
 
         Ok(options)
@@ -162,7 +164,7 @@ impl<'a> ExcelCell<'a> {
         )))
     }
 
-    pub fn from_py_hinted(elem: &'a Bound<'a, PyAny>, hint: Option<ColTypeHint>) -> PyResult<(Self, ColTypeHint)> {
+    pub fn from_py_hinted(elem: &'a Bound<'a, PyAny>, hint: Option<&ColTypeHint>) -> PyResult<(Self, ColTypeHint)> {
         if let Some(h) = hint {
             if elem.is_none() {
                 return Ok((ExcelCell::Blank, ColTypeHint::Blank));
@@ -306,12 +308,35 @@ impl XIOFormat {
 pub struct XIOWWorksheet {
     worksheet: *mut Worksheet,
     col_hints: Vec<ColTypeHint>,
-    col_formats_setted: Vec<bool>,
+    col_formats_setted: Vec<Option<Format>>,
+    row_formats_setted: Vec<Option<Format>>,
     options: XIOWOptions,
 
 }
 unsafe impl Send for XIOWWorksheet {}
 unsafe impl Sync for XIOWWorksheet {}
+
+fn resolve_format_cache<'a>(
+    cache: &mut Vec<Option<Format>>,
+    idx: usize,
+    format: Option<&'a Format>,
+) -> (bool, Option<&'a Format>) {
+    if idx >= cache.len() {
+        cache.resize(idx + 1, None);
+    }
+
+    match (&cache[idx], format) {
+        // First time seeing a format for this col/row — cache it and cache as default.
+        (None, Some(fmt)) => {
+            cache[idx] = Some(fmt.clone());
+            (true, Some(fmt))
+        }
+        // Matches the cached default — no need to write it on the cell explicitly.
+        (Some(cached), Some(fmt)) if cached == fmt => (false, None),
+        // Anything else (including None) — pass through as-is.
+        _ => (false, format),
+    }
+}
 
 impl XIOWWorksheet {
 
@@ -335,44 +360,41 @@ impl XIOWWorksheet {
         format: Option<&Format>,
     ) -> PyResult<()> {
         let colidx = col as usize;
-        let cell: ExcelCell;
-        if self.options.cache_typehints_write_optimization {
-            let cached_hint = self.col_hints.get(colidx).copied();
+        let rowidx = row as usize;
 
-            let hint: ColTypeHint;
-            (cell, hint) = ExcelCell::from_py_hinted(value, cached_hint)?;
+        let cell: ExcelCell = if self.options.cache_typehints_write_optimization {
+            let cached_hint = self.col_hints.get(colidx);
+            let (cell, hint) = ExcelCell::from_py_hinted(value, cached_hint)?;
             if colidx >= self.col_hints.len() {
                 self.col_hints.resize(colidx + 1, ColTypeHint::Unknown);
             }
             self.col_hints[colidx] = hint;
+            cell
         } else {
-            cell = ExcelCell::from_py(value)?;
-        }
-        
-        let worksheet: &mut Worksheet;
-        let mut cell_format: Option<&Format> = format;
-        
-        if self.options.cache_col_formats {
-            if colidx >= self.col_formats_setted.len() {
-                self.col_formats_setted.resize(colidx + 1, false);
-            }
+            ExcelCell::from_py(value)?
+        };
 
-            let mut fmtflag = self.col_formats_setted[colidx];
-            if !fmtflag && format.is_some() {
-                fmtflag = true;
-                self.col_formats_setted[colidx] = true;
-                worksheet = self.worksheet_refmut();
+        let (should_be_set, cell_format) = if self.options.cache_col_formats {
+            resolve_format_cache(&mut self.col_formats_setted, colidx, format)
+        } else if self.options.cache_row_formats {
+            resolve_format_cache(&mut self.row_formats_setted, rowidx, format)
+        } else {
+            (false, format)
+        };
+
+        let worksheet = self.worksheet_refmut();
+
+        if should_be_set {
+            let fmt = cell_format.expect("format must be Some when should_be_set is true");
+            if self.options.cache_col_formats {
                 worksheet
-                    .set_column_format(col, format.unwrap())
+                    .set_column_format(col, fmt)
                     .map_err(|e| PyValueError::new_err(e.to_string()))?;
             } else {
-                worksheet = self.worksheet_refmut();
+                worksheet
+                    .set_row_format(row, fmt)
+                    .map_err(|e| PyValueError::new_err(e.to_string()))?;
             }
-            if fmtflag {
-                cell_format = None;
-            }
-        } else {
-            worksheet = self.worksheet_refmut();
         }
 
         cell.write(worksheet, row, col, cell_format)
@@ -383,6 +405,7 @@ impl XIOWWorksheet {
         Self {
             worksheet: worksheet as *mut Worksheet, 
             col_hints: Vec::new(),
+            row_formats_setted: Vec::new(),
             col_formats_setted: Vec::new(),
             options: options,
         }
@@ -527,16 +550,6 @@ impl XIOWWorksheet {
         Ok(())
     }
 
-    pub fn write_columns<'py>(
-        &mut self,
-        row: RowNum,
-        col: ColNum,
-        value: &Bound<'py, PySequence>,
-        formats: Option<&Bound<'py, PyList>>,
-    ) -> PyResult<()> {
-        todo!();
-    }
-
     #[pyo3(signature = (first_row, first_col, last_row, last_col, value, format = None))]
     pub fn merge_range<'py>(
         &mut self,
@@ -559,6 +572,16 @@ impl XIOWWorksheet {
         })
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
+        Ok(())
+    }
+
+    #[pyo3(signature = (col, width))]
+    fn set_column_width(
+        &self,
+        col: ColNum,
+        width: XlsxFloat
+    ) -> PyResult<()> {
+        self.worksheet_refmut().set_column_width(col, width).map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(())
     }
     
