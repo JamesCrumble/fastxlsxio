@@ -83,6 +83,8 @@ pub enum ColTypeHint {
     Blank,
 
     // unsupported fast convertions
+    Date,
+    Time,
     DateTime,
     Sequence,
 
@@ -90,7 +92,7 @@ pub enum ColTypeHint {
 }
 
 impl ColTypeHint {
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 9;
 
     // Explicit match instead of `as usize` cast on the discriminant —
     // stays correct even if variants get reordered later.
@@ -101,9 +103,11 @@ impl ColTypeHint {
             ColTypeHint::String => 2,
             ColTypeHint::Bool => 3,
             ColTypeHint::Blank => 4,
-            ColTypeHint::DateTime => 5,
-            ColTypeHint::Sequence => 6,
-            ColTypeHint::Unknown => 7,
+            ColTypeHint::Date => 5,
+            ColTypeHint::Time => 6,
+            ColTypeHint::DateTime => 7,
+            ColTypeHint::Sequence => 8,
+            ColTypeHint::Unknown => 9,
         }
     }
 
@@ -113,6 +117,8 @@ impl ColTypeHint {
             ExcelCell::Int(_) => ColTypeHint::Int,
             ExcelCell::String(_) => ColTypeHint::String,
             ExcelCell::Bool(_) => ColTypeHint::Bool,
+            ExcelCell::Date(_) => ColTypeHint::Date,
+            ExcelCell::Time(_) => ColTypeHint::Time,
             ExcelCell::DateTime(_) => ColTypeHint::DateTime,
             ExcelCell::Sequence(_) => ColTypeHint::Sequence,            
             ExcelCell::Blank => ColTypeHint::Blank,
@@ -126,6 +132,8 @@ pub enum ExcelCell<'a> {
     Int(XlsxInt),
     Bool(bool),
     DateTime(ExcelDateTime),
+    Date(ExcelDateTime),
+    Time(ExcelDateTime),
     Sequence(String),
     Blank,
 }
@@ -162,10 +170,10 @@ impl<'a> ExcelCell<'a> {
             return Ok(ExcelCell::DateTime(pydatetime_xlsx_format(dt)?));
         }
         if let Ok(d) = elem.cast::<PyDate>() {
-            return Ok(ExcelCell::DateTime(pydate_xlsx_format(d)?));
+            return Ok(ExcelCell::Date(pydate_xlsx_format(d)?));
         }
         if let Ok(t) = elem.cast::<PyTime>() {
-            return Ok(ExcelCell::DateTime(pytime_xlsx_format(t)?));
+            return Ok(ExcelCell::Time(pytime_xlsx_format(t)?));
         }
         if let Ok(t) = elem.cast::<PySequence>() {
             return Ok(ExcelCell::Sequence(pyone_dimensional_iter_xlsx_format(t)?));
@@ -226,6 +234,8 @@ impl<'a> ExcelCell<'a> {
             (ExcelCell::Int(n), None) => worksheet.write_number(row, col, *n),
             (ExcelCell::Float(n), None) => worksheet.write_number(row, col, *n),
             (ExcelCell::Bool(b), None) => {worksheet.write_boolean(row, col, *b)},
+            (ExcelCell::Date(dt), None) => worksheet.write_datetime(row, col, dt),
+            (ExcelCell::Time(dt), None) => worksheet.write_datetime(row, col, dt),
             (ExcelCell::DateTime(dt), None) => worksheet.write_datetime(row, col, dt),
             (ExcelCell::Sequence(s), None) => worksheet.write_string(row, col, s),
             
@@ -234,6 +244,8 @@ impl<'a> ExcelCell<'a> {
             (ExcelCell::Int(n), Some(fmt)) => worksheet.write_number_with_format(row, col, *n, fmt),
             (ExcelCell::Float(n), Some(fmt)) => worksheet.write_number_with_format(row, col, *n, fmt),
             (ExcelCell::Bool(b), Some(fmt)) => worksheet.write_boolean_with_format(row, col, *b, fmt),
+            (ExcelCell::Date(dt), Some(fmt)) => worksheet.write_datetime_with_format(row, col, dt, fmt),
+            (ExcelCell::Time(dt), Some(fmt)) => worksheet.write_datetime_with_format(row, col, dt, fmt),
             (ExcelCell::DateTime(dt), Some(fmt)) => worksheet.write_datetime_with_format(row, col, dt, fmt),
             (ExcelCell::Sequence(s), Some(fmt)) => worksheet.write_string_with_format(row, col, s, fmt),
         };

@@ -15,6 +15,8 @@ class ColTypeHint:
     String: ClassVar[ColTypeHint]
     Bool: ClassVar[ColTypeHint]
     Blank: ClassVar[ColTypeHint]
+    Date: ClassVar[ColTypeHint]
+    Time: ClassVar[ColTypeHint]
     DateTime: ClassVar[ColTypeHint]
     Sequence: ClassVar[ColTypeHint]
     Unknown: ClassVar[ColTypeHint]
