@@ -191,10 +191,7 @@ impl<'a> ExcelCell<'a> {
             return Ok(ExcelCell::Float(pydecimal_xlsx_format(elem)?));
         }
 
-        Err(PyNotImplementedError::new_err(format!(
-            "Unsupported type for Excel export: {}",
-            elem.get_type().name()?
-        )))
+        Ok(ExcelCell::String(Cow::Owned(elem.to_string())))
     }
 
     pub fn from_py_hinted(elem: &'a Bound<'a, PyAny>, hint: Option<&ColTypeHint>) -> PyResult<(Self, ColTypeHint)> {

@@ -7,12 +7,14 @@ from fastxlsxio import ColTypeHint, XIOWOptions, XIOWWorkbook
 from xlsxwriter.workbook import Workbook
 
 NUM_ROWS = 300_000
-NUM_COLS = 2
+NUM_COLS = 20
 
 
 def data_():
     for _ in range(NUM_ROWS):
-        yield {f"key: {v}": f"{v * 1000}" if v % 2 == 0 else v / 1 for v in range(NUM_COLS)}
+        ret = {f"key: {v}": f"{v * 1000}" if v % 2 == 0 else v / 1 for v in range(NUM_COLS)}
+        ret["object"] = object()
+        yield ret
 
 
 def data_by_batch():
