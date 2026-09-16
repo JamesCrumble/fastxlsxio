@@ -39,7 +39,7 @@ def data_by_batch():
 data = list(data_by_batch())
 
 
-def fastxlsxio_build(xlsx: str, multithreaded: bool):
+def fastxlsxio_build(xlsx: str, multithreaded: bool = False):
     sheets = ("Sheet 3", "Sheet 1", "Sheet 2")
 
     options = XIOWOptions(constant_memory=True, cache_typehints_write_optimization=True)
@@ -79,7 +79,7 @@ def fastxlsxio_build(xlsx: str, multithreaded: bool):
     print(f"fastxlsxio: xlsx saved for {time.monotonic() - sst:.2f}s. Note: fully detached from gil save")
 
 
-def xlsxwriter_build(xlsx: str, multithreaded: bool):
+def xlsxwriter_build(xlsx: str, multithreaded: bool = False):
     sheets = ("Sheet 3", "Sheet 1", "Sheet 2")
 
     excel = Workbook(xlsx, options={"constant_memory": True, "remove_timezone": True})

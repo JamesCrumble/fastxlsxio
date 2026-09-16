@@ -550,17 +550,30 @@ impl XIOWWorksheet {
             return Ok(());
         }
 
-        let iter_result = if let Ok(dict) = value.cast::<PyDict>() {
-            dict.values().try_iter()
-        } else {
-            value.try_iter()
-        }.map_err(|e| {
+        if let Ok(dict) = value.cast::<PyDict>() {
+            let py = value.py();
+            let mut pos: ffi::Py_ssize_t = 0;
+            let mut key: *mut ffi::PyObject = std::ptr::null_mut();
+            let mut val: *mut ffi::PyObject = std::ptr::null_mut();
+            let mut offset: usize = 0;
+
+            unsafe {
+                while ffi::PyDict_Next(dict.as_ptr(), &mut pos, &mut key, &mut val) != 0 {
+                    let item = Bound::from_borrowed_ptr(py, val);
+                    extract_format_by_offset!(rs_formats, offset, rs_format);
+                    self._write_cell_rs(row, col + offset as ColNum, &item, rs_format)?;
+                    offset += 1;
+                }
+            }
+            return Ok(());
+        }
+            
+        let iter_result = value.try_iter().map_err(|e| {
             PyValueError::new_err(format!("Cannot write row from invalid object: {}", e))
         })?;
 
         for (offset, item) in iter_result.enumerate() {
             extract_format_by_offset!(rs_formats, offset, rs_format);
-            // was .unwrap() - now errors instead of panicking
             self._write_cell_rs(row, col + offset as ColNum, &item?, rs_format)?;
         }
 
