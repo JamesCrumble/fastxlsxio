@@ -92,17 +92,13 @@ pub enum ColTypeHint {
     Sequence,
 
     Unknown,
-    // Cached hint got proven wrong for some row in this column — it's
-    // heterogeneous. Fast-path hinting is permanently disabled for it;
-    // every write goes through the full `ExcelCell::from_py` path.
+    // column proved heterogeneous
     Dynamic,
 }
 
 impl ColTypeHint {
     pub const COUNT: usize = 11;
 
-    // Explicit match instead of `as usize` cast on the discriminant —
-    // stays correct even if variants get reordered later.
     fn as_index(self) -> usize {
         match self {
             ColTypeHint::Float => 0,
@@ -148,59 +144,58 @@ pub enum ExcelCell<'a> {
 
 impl<'a> ExcelCell<'a> {
 
-    pub fn from_py(elem: &'a Bound<'a, PyAny>) -> PyResult<Self> {
-        let ptr = elem.as_ptr();
+    pub fn from_py(value: &'a Bound<'a, PyAny>) -> PyResult<Self> {
+        let ptr = value.as_ptr();
 
         unsafe {
-            // as fast as possible for regular data types without downcast/cast
             if ffi::PyFloat_CheckExact(ptr) != 0 {
-                let f: &Bound<'a, PyFloat> = elem.cast_unchecked();
+                let f: &Bound<'a, PyFloat> = value.cast_unchecked();
                 return Ok(ExcelCell::Float(f.value()));
             }
             if ffi::PyLong_CheckExact(ptr) != 0 && ffi::PyBool_Check(ptr) == 0 {
-                let val: XlsxInt = elem.extract()?;
+                let val: XlsxInt = value.extract()?;
                 return Ok(ExcelCell::Int(val));
             }
             if ffi::PyUnicode_CheckExact(ptr) != 0 {
-                let s: &Bound<'a, PyString> = elem.cast_unchecked();
+                let s: &Bound<'a, PyString> = value.cast_unchecked();
                 return Ok(ExcelCell::String(Cow::Borrowed(s.to_str()?)));
             }
-            if elem.is_none() {
+            if value.is_none() {
                 return Ok(ExcelCell::Blank);
             }
             if ffi::PyBool_Check(ptr) != 0 {
-                let b: &Bound<'a, PyBool> = elem.cast_unchecked();
+                let b: &Bound<'a, PyBool> = value.cast_unchecked();
                 return Ok(ExcelCell::Bool(b.is_true()));
             }
         }
 
-        if let Ok(dt) = elem.cast::<PyDateTime>() {
+        if let Ok(dt) = value.cast::<PyDateTime>() {
             return Ok(ExcelCell::DateTime(pydatetime_xlsx_format(dt)?));
         }
-        if let Ok(d) = elem.cast::<PyDate>() {
+        if let Ok(d) = value.cast::<PyDate>() {
             return Ok(ExcelCell::Date(pydate_xlsx_format(d)?));
         }
-        if let Ok(t) = elem.cast::<PyTime>() {
+        if let Ok(t) = value.cast::<PyTime>() {
             return Ok(ExcelCell::Time(pytime_xlsx_format(t)?));
         }
-        if let Ok(t) = elem.cast::<PySequence>() {
+        if let Ok(t) = value.cast::<PySequence>() {
             return Ok(ExcelCell::Sequence(pyone_dimensional_iter_xlsx_format(t)?));
         }
-        if elem.get_type().name()? == "Decimal" {
-            return Ok(ExcelCell::Float(pydecimal_xlsx_format(elem)?));
+        if value.get_type().name()? == "Decimal" {
+            return Ok(ExcelCell::Float(pydecimal_xlsx_format(value)?));
         }
 
-        Ok(ExcelCell::String(Cow::Owned(elem.to_string())))
+        Ok(ExcelCell::String(Cow::Owned(value.to_string())))
     }
 
-    pub fn from_py_hinted(elem: &'a Bound<'a, PyAny>, hint: Option<&ColTypeHint>) -> PyResult<(Self, ColTypeHint)> {
+    pub fn from_py_hinted(value: &'a Bound<'a, PyAny>, hint: Option<&ColTypeHint>) -> PyResult<(Self, ColTypeHint)> {
         if let Some(h) = hint {
             if *h == ColTypeHint::Dynamic {
-                let cell = Self::from_py(elem)?;
+                let cell = Self::from_py(value)?;
                 return Ok((cell, ColTypeHint::Dynamic));
             }
 
-            if elem.is_none() {
+            if value.is_none() {
                 return Ok((ExcelCell::Blank, ColTypeHint::Blank));
             }
 
@@ -216,39 +211,39 @@ impl<'a> ExcelCell<'a> {
             );
 
             if has_fast_path {
-                let ptr = elem.as_ptr();
+                let ptr = value.as_ptr();
                 unsafe {
                     match h {
                         ColTypeHint::Float if ffi::PyFloat_CheckExact(ptr) != 0 => {
-                            let f: &Bound<'a, PyFloat> = elem.cast_unchecked();
+                            let f: &Bound<'a, PyFloat> = value.cast_unchecked();
                             return Ok((ExcelCell::Float(f.value()), ColTypeHint::Float));
                         }
                         ColTypeHint::Int if ffi::PyLong_CheckExact(ptr) != 0 && ffi::PyBool_Check(ptr) == 0 => {
-                            let i: XlsxInt = elem.extract()?;
+                            let i: XlsxInt = value.extract()?;
                             return Ok((ExcelCell::Int(i), ColTypeHint::Int));
                         }
                         ColTypeHint::String if ffi::PyUnicode_CheckExact(ptr) != 0 => {
-                            let s: &Bound<'a, PyString> = elem.cast_unchecked();
+                            let s: &Bound<'a, PyString> = value.cast_unchecked();
                             return Ok((ExcelCell::String(Cow::Borrowed(s.to_str()?)), ColTypeHint::String));
                         }
                         ColTypeHint::Bool if ffi::PyBool_Check(ptr) != 0 => {
-                            let b: &Bound<'a, PyBool> = elem.cast_unchecked();
+                            let b: &Bound<'a, PyBool> = value.cast_unchecked();
                             return Ok((ExcelCell::Bool(b.is_true()), ColTypeHint::Bool));
                         }
                         ColTypeHint::Date if ffi::PyDate_CheckExact(ptr) != 0 => {
-                            let d: &Bound<'a, PyDate> = elem.cast_unchecked();
+                            let d: &Bound<'a, PyDate> = value.cast_unchecked();
                             return Ok((ExcelCell::Date(pydate_xlsx_format(d)?), ColTypeHint::Date));
                         }
                         ColTypeHint::Time if ffi::PyTime_CheckExact(ptr) != 0 => {
-                            let t: &Bound<'a, PyTime> = elem.cast_unchecked();
+                            let t: &Bound<'a, PyTime> = value.cast_unchecked();
                             return Ok((ExcelCell::Time(pytime_xlsx_format(t)?), ColTypeHint::Time));
                         }
                         ColTypeHint::DateTime if ffi::PyDateTime_CheckExact(ptr) != 0 => {
-                            let dt: &Bound<'a, PyDateTime> = elem.cast_unchecked();
+                            let dt: &Bound<'a, PyDateTime> = value.cast_unchecked();
                             return Ok((ExcelCell::DateTime(pydatetime_xlsx_format(dt)?), ColTypeHint::DateTime));
                         }
                         _ => {
-                            let cell = Self::from_py(elem)?;
+                            let cell = Self::from_py(value)?;
                             return Ok((cell, ColTypeHint::Dynamic));
                         }
                     }
@@ -256,7 +251,7 @@ impl<'a> ExcelCell<'a> {
             }
         }
 
-        let cell = Self::from_py(elem)?;
+        let cell = Self::from_py(value)?;
         let new_hint = ColTypeHint::from_excel_cell(&cell);
         Ok((cell, new_hint))
     }
@@ -278,7 +273,7 @@ impl<'a> ExcelCell<'a> {
             (ExcelCell::Time(dt), None) => worksheet.write_datetime(row, col, dt),
             (ExcelCell::DateTime(dt), None) => worksheet.write_datetime(row, col, dt),
             (ExcelCell::Sequence(s), None) => worksheet.write_string(row, col, s),
-            
+
             (ExcelCell::String(s), Some(fmt)) => worksheet.write_string_with_format(row, col, s.as_ref(), fmt),
             (ExcelCell::Blank, Some(fmt)) => worksheet.write_blank(row, col, fmt),
             (ExcelCell::Int(n), Some(fmt)) => worksheet.write_number_with_format(row, col, *n, fmt),
@@ -371,18 +366,14 @@ impl XIOFormat {
     }
 }
 
-#[pyclass(from_py_object, weakref)]
-#[derive(Clone)]
-pub struct XIOWWorksheet {
-    worksheet: *mut Worksheet,
+// Owned by XIOWWorkbook, referenced by XIOWWorksheet through a raw pointer
+// so cloning a worksheet handle never copies grown caches.
+#[derive(Default)]
+struct WorksheetCaches {
     col_hints: Vec<ColTypeHint>,
     col_formats_setted: Vec<Option<Format>>,
     row_formats_setted: Vec<Option<Format>>,
-    options: XIOWOptions,
-    datatype_format_bindings: *const [Option<Format>; ColTypeHint::COUNT],
 }
-unsafe impl Send for XIOWWorksheet {}
-unsafe impl Sync for XIOWWorksheet {}
 
 fn resolve_format_cache<'a>(
     cache: &mut Vec<Option<Format>>,
@@ -394,17 +385,25 @@ fn resolve_format_cache<'a>(
     }
 
     match (&cache[idx], format) {
-        // First time seeing a format for this col/row — cache it and cache as default.
         (None, Some(fmt)) => {
             cache[idx] = Some(fmt.clone());
             (true, Some(fmt))
         }
-        // Matches the cached default — no need to write it on the cell explicitly.
         (Some(cached), Some(fmt)) if cached == fmt => (false, None),
-        // Anything else (including None) — pass through as-is.
         _ => (false, format),
     }
 }
+
+#[pyclass(from_py_object, weakref)]
+#[derive(Clone)]
+pub struct XIOWWorksheet {
+    worksheet: *mut Worksheet,
+    caches: *mut WorksheetCaches,
+    options: XIOWOptions,
+    datatype_format_bindings: *const [Option<Format>; ColTypeHint::COUNT],
+}
+unsafe impl Send for XIOWWorksheet {}
+unsafe impl Sync for XIOWWorksheet {}
 
 impl XIOWWorksheet {
 
@@ -420,6 +419,28 @@ impl XIOWWorksheet {
         unsafe { &mut *self.worksheet }
     }
 
+    #[inline(always)]
+    fn caches_refmut(&self) -> &mut WorksheetCaches {
+        assert!(!self.caches.is_null(), "ERROR: Something went wrong. Cannot use worksheet which is deallocated!!!");
+        unsafe { &mut *self.caches }
+    }
+
+    fn new(
+        worksheet: &mut Worksheet,
+        name: String,
+        options: XIOWOptions,
+        caches: *mut WorksheetCaches,
+        datatype_format_bindings: *const [Option<Format>; ColTypeHint::COUNT],
+    ) -> Self {
+        let _ = worksheet.set_name(name).map_err(|e| PyValueError::new_err(e.to_string()));
+        Self {
+            worksheet: worksheet as *mut Worksheet,
+            caches,
+            options,
+            datatype_format_bindings,
+        }
+    }
+
     fn _write_cell_rs(
         &mut self,
         row: RowNum,
@@ -429,14 +450,15 @@ impl XIOWWorksheet {
     ) -> PyResult<()> {
         let colidx = col as usize;
         let rowidx = row as usize;
+        let caches = self.caches_refmut();
 
         let cell: ExcelCell = if self.options.cache_typehints_write_optimization {
-            let cached_hint = self.col_hints.get(colidx);
+            let cached_hint = caches.col_hints.get(colidx);
             let (cell, hint) = ExcelCell::from_py_hinted(value, cached_hint)?;
-            if colidx >= self.col_hints.len() {
-                self.col_hints.resize(colidx + 1, ColTypeHint::Unknown);
+            if colidx >= caches.col_hints.len() {
+                caches.col_hints.resize(colidx + 1, ColTypeHint::Unknown);
             }
-            self.col_hints[colidx] = hint;
+            caches.col_hints[colidx] = hint;
             cell
         } else {
             ExcelCell::from_py(value)?
@@ -451,9 +473,9 @@ impl XIOWWorksheet {
         };
 
         let (should_be_set, cell_format) = if self.options.cache_col_formats {
-            resolve_format_cache(&mut self.col_formats_setted, colidx, format)
+            resolve_format_cache(&mut caches.col_formats_setted, colidx, format)
         } else if self.options.cache_row_formats {
-            resolve_format_cache(&mut self.row_formats_setted, rowidx, format)
+            resolve_format_cache(&mut caches.row_formats_setted, rowidx, format)
         } else {
             (false, format)
         };
@@ -463,39 +485,18 @@ impl XIOWWorksheet {
         if should_be_set {
             let fmt = cell_format.expect("format must be Some when should_be_set is true");
             if self.options.cache_col_formats {
-                worksheet
-                    .set_column_format(col, fmt)
-                    .map_err(|e| PyValueError::new_err(e.to_string()))?;
+                worksheet.set_column_format(col, fmt).map_err(|e| PyValueError::new_err(e.to_string()))?;
             } else {
-                worksheet
-                    .set_row_format(row, fmt)
-                    .map_err(|e| PyValueError::new_err(e.to_string()))?;
+                worksheet.set_row_format(row, fmt).map_err(|e| PyValueError::new_err(e.to_string()))?;
             }
         }
         cell.write(worksheet, row, col, cell_format)
-    }
-
-    pub fn internal_new(
-        worksheet: &mut Worksheet, 
-        name: String, 
-        options: XIOWOptions, 
-        datatype_format_bindings: *const [Option<Format>; ColTypeHint::COUNT],
-    ) -> Self {
-        let _ = worksheet.set_name(name).map_err(|e| PyValueError::new_err(e.to_string()));
-        Self {
-            worksheet: worksheet as *mut Worksheet,
-            col_hints: Vec::new(),
-            row_formats_setted: Vec::new(),
-            col_formats_setted: Vec::new(),
-            options,
-            datatype_format_bindings,
-        }
     }
 }
 
 #[pymethods]
 impl XIOWWorksheet {
-    
+
     #[getter]
     pub fn constant_memory(&self) -> bool {
         self.options.constant_memory
@@ -533,7 +534,6 @@ impl XIOWWorksheet {
     ) -> PyResult<()> {
         unpack_formats!(formats, rs_formats);
 
-        // PyList directly
         if let Ok(list) = value.cast::<PyList>() {
             for (offset, item) in list.iter().enumerate() {
                 extract_format_by_offset!(rs_formats, offset, rs_format);
@@ -542,7 +542,6 @@ impl XIOWWorksheet {
             return Ok(());
         }
 
-        // PyTuple directly
         if let Ok(tuple) = value.cast::<PyTuple>() {
             for (offset, item) in tuple.iter().enumerate() {
                 extract_format_by_offset!(rs_formats, offset, rs_format);
@@ -551,7 +550,7 @@ impl XIOWWorksheet {
             return Ok(());
         }
 
-        let iter_result= if let Ok(dict) = value.cast::<PyDict>() {
+        let iter_result = if let Ok(dict) = value.cast::<PyDict>() {
             dict.values().try_iter()
         } else {
             value.try_iter()
@@ -561,7 +560,8 @@ impl XIOWWorksheet {
 
         for (offset, item) in iter_result.enumerate() {
             extract_format_by_offset!(rs_formats, offset, rs_format);
-            self._write_cell_rs(row, col + offset as ColNum, &item.unwrap(), rs_format)?;
+            // was .unwrap() - now errors instead of panicking
+            self._write_cell_rs(row, col + offset as ColNum, &item?, rs_format)?;
         }
 
         Ok(())
@@ -604,19 +604,12 @@ impl XIOWWorksheet {
             ));
         }
 
-        unpack_format!(format, rs_format);
         let iter = value.try_iter().map_err(|e| {
             PyValueError::new_err(format!("Cannot write column from invalid object: {}", e))
         })?;
 
-
-        for (offset, elem_res) in iter.enumerate() {
-            let elem = elem_res?;
-            if elem.is_none() {
-                continue;
-            }
-
-            self._write_cell_rs(row + offset as RowNum, col, value, rs_format)?;
+        for (offset, item) in iter.enumerate() {
+            self._write_cell_rs(row + offset as RowNum, col, &item?, None)?;
         }
 
         Ok(())
@@ -635,7 +628,7 @@ impl XIOWWorksheet {
         unpack_format!(format, rs_format);
         let worksheet = self.worksheet_refmut();
 
-        let py_str = value.str()?; 
+        let py_str = value.str()?;
         let rust_str: &str = py_str.to_str()?;
 
         worksheet.merge_range(first_row, first_col, last_row, last_col, rust_str, rs_format.unwrap_or(&DEFAULT_FORMAT))
@@ -657,24 +650,40 @@ impl XIOWWorksheet {
     #[pyo3(signature = (col, format))]
     fn set_column_format<'py>(&mut self, col: ColNum, format: &Bound<'py, XIOFormat>) -> PyResult<()> {
         unpack_format!(Some(format), rs_format);
+        let fmt = rs_format.unwrap();
+
         if self.options.cache_col_formats {
-            resolve_format_cache(&mut self.col_formats_setted, col as usize, rs_format);
+            let caches = self.caches_refmut();
+            let idx = col as usize;
+            if idx >= caches.col_formats_setted.len() {
+                caches.col_formats_setted.resize(idx + 1, None);
+            }
+            // explicit override - unconditional, unlike resolve_format_cache's
+            // opportunistic "first format wins" behavior for per-cell writes
+            caches.col_formats_setted[idx] = Some(fmt.clone());
         }
-        self.worksheet_refmut().set_column_format(col, rs_format.unwrap()).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        self.worksheet_refmut().set_column_format(col, fmt).map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(())
     }
 
     #[pyo3(signature = (row, format))]
     fn set_row_format<'py>(&mut self, row: RowNum, format: &Bound<'py, XIOFormat>) -> PyResult<()> {
         unpack_format!(Some(format), rs_format);
+        let fmt = rs_format.unwrap();
+
         if self.options.cache_row_formats {
-            resolve_format_cache(&mut self.row_formats_setted, row as usize, rs_format);
+            let caches = self.caches_refmut();
+            let idx = row as usize;
+            if idx >= caches.row_formats_setted.len() {
+                caches.row_formats_setted.resize(idx + 1, None);
+            }
+            caches.row_formats_setted[idx] = Some(fmt.clone());
         }
-        self.worksheet_refmut().set_row_format(row, rs_format.unwrap()).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        self.worksheet_refmut().set_row_format(row, fmt).map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(())
     }
-    
-    fn __repr__(&mut self) -> String {
+
+    fn __repr__(&self) -> String {
         format!("<XIOWWorksheet \"{}\">", self.name())
     }
 }
@@ -684,14 +693,15 @@ pub struct XIOWWorkbook {
     filepath: Option<String>,
     workbook: Workbook,
     worksheets: Vec<XIOWWorksheet>,
+    worksheet_caches: Vec<Box<WorksheetCaches>>,
     pub options: XIOWOptions,
     datatype_format_bindings: Box<[Option<Format>; ColTypeHint::COUNT]>,
 }
 
 impl XIOWWorkbook {
     fn get_sheetnames_string(&mut self) -> String {
-        let sheetnames = self.workbook.worksheets().iter()
-            .map(|x| format!("\"{}\"", x.name()))
+        let sheetnames = self.worksheets.iter()
+            .map(|ws| format!("\"{}\"", ws.name()))
             .collect::<Vec<String>>();
         format!("[{}]", sheetnames.join(", "))
     }
@@ -704,9 +714,10 @@ impl XIOWWorkbook {
     #[pyo3(signature = (filepath = None, options = None))]
     fn new(filepath: Option<String>, options: Option<XIOWOptions>) -> Self {
         Self {
-            filepath: filepath,
+            filepath,
             workbook: Workbook::new(),
             worksheets: Vec::new(),
+            worksheet_caches: Vec::new(),
             options: options.unwrap_or(XIOWOptions::default()),
             datatype_format_bindings: Box::new(std::array::from_fn(|_| None)),
         }
@@ -750,10 +761,15 @@ impl XIOWWorkbook {
             self.workbook.add_worksheet()
         };
 
-        let sheet = XIOWWorksheet::internal_new(
+        let mut caches = Box::new(WorksheetCaches::default());
+        let caches_ptr: *mut WorksheetCaches = caches.as_mut();
+        self.worksheet_caches.push(caches);
+
+        let sheet = XIOWWorksheet::new(
             worksheet,
             name,
             ws_options,
+            caches_ptr,
             self.datatype_format_bindings.as_ref() as *const _,
         );
         self.worksheets.push(sheet.clone());
@@ -772,6 +788,7 @@ impl XIOWWorkbook {
             Some(p) => {path = p}
             None => {path = self.filepath.clone().unwrap()}
         }
+
         py.detach(|| {self.workbook.save(path)}).map_err(|e| PyFileExistsError::new_err(e.to_string()))
     }
 
@@ -788,7 +805,7 @@ impl XIOWWorkbook {
         let sheet = self
             .worksheets
             .iter()
-            .find(|ws| ws.name() == name) // Используем имя из сохраненной структуры
+            .find(|ws| ws.name() == name)
             .ok_or_else(|| PyValueError::new_err(format!("Worksheet '{}' not found", name)))?;
 
         Ok(sheet.clone())
