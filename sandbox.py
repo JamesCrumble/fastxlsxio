@@ -3,7 +3,8 @@ import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from datetime import time as dttime
 from itertools import batched
 
 from fastxlsxio import ColTypeHint, XIOWOptions, XIOWWorkbook
@@ -11,7 +12,7 @@ from xlsxwriter.workbook import Workbook
 
 NUM_ROWS = 300_000
 STATIC_COLS = 7
-DYNAMIC_COLS = 20
+DYNAMIC_COLS = 10
 NUM_COLS = STATIC_COLS + DYNAMIC_COLS
 
 TPOOL = ThreadPoolExecutor(max_workers=2)
@@ -46,6 +47,9 @@ def fastxlsxio_build(xlsx: str, multithreaded: bool = False):
     excel = XIOWWorkbook(xlsx, options=options)
     excel.add_format({"num_format": "###.0"}, bind_to_datatype=ColTypeHint.Int)
     excel.add_format({"num_format": "###.123"}, bind_to_datatype=ColTypeHint.Float)
+    excel.add_format({"num_format": "dd.mm.yyyy"}, bind_to_datatype=ColTypeHint.Date)
+    excel.add_format({"num_format": "dd.mm.yyyy hh:mm:ss"}, bind_to_datatype=ColTypeHint.DateTime)
+    excel.add_format({"num_format": "hh:mm:ss"}, bind_to_datatype=ColTypeHint.Time)
 
     tasks = list()
     rows_written: int = 0
@@ -85,6 +89,9 @@ def xlsxwriter_build(xlsx: str, multithreaded: bool = False):
     excel = Workbook(xlsx, options={"constant_memory": True, "remove_timezone": True})
     intfmt = excel.add_format({"num_format": "###.0"})
     floatfmt = excel.add_format({"num_format": "###.123"})
+    datefmt = excel.add_format({"num_format": "dd.mm.yyyy"})
+    datetimefmt = excel.add_format({"num_format": "dd.mm.yyyy hh:mm:ss"})
+    timefmt = excel.add_format({"num_format": "hh:mm:ss"})
 
     tasks = list()
     rows_written: int = 0
@@ -101,10 +108,16 @@ def xlsxwriter_build(xlsx: str, multithreaded: bool = False):
                         if isinstance(value, uuid.UUID):
                             value = str(value)
 
-                        if isinstance(value, int):
+                        if type(value) is int:
                             sheet.write_number(row_, j, value, intfmt)
-                        elif isinstance(value, float):
+                        elif type(value) is float:
                             sheet.write_number(row_, j, value, floatfmt)
+                        elif type(value) is date:
+                            sheet.write_datetime(row_, j, value, datefmt)
+                        elif type(value) is datetime:
+                            sheet.write_datetime(row_, j, value, datetimefmt)
+                        elif type(value) is dttime:
+                            sheet.write_datetime(row_, j, value, timefmt)
                         else:
                             sheet.write(row_, j, value)
 

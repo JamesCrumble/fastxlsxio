@@ -1,6 +1,7 @@
 use crate::write::pyconv::*;
 
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
 
 use pyo3::ffi;
@@ -143,6 +144,20 @@ pub enum ExcelCell<'a> {
 }
 
 impl<'a> ExcelCell<'a> {
+
+    pub fn into_owned(self) -> ExcelCell<'static> {
+        match self {
+            ExcelCell::String(s) => ExcelCell::String(Cow::Owned(s.into_owned())),
+            ExcelCell::Float(v) => ExcelCell::Float(v),
+            ExcelCell::Int(v) => ExcelCell::Int(v),
+            ExcelCell::Bool(v) => ExcelCell::Bool(v),
+            ExcelCell::DateTime(v) => ExcelCell::DateTime(v),
+            ExcelCell::Date(v) => ExcelCell::Date(v),
+            ExcelCell::Time(v) => ExcelCell::Time(v),
+            ExcelCell::Sequence(v) => ExcelCell::Sequence(v),
+            ExcelCell::Blank => ExcelCell::Blank,
+        }
+    }
 
     pub fn from_py(value: &'a Bound<'a, PyAny>) -> PyResult<Self> {
         let ptr = value.as_ptr();
@@ -373,6 +388,28 @@ struct WorksheetCaches {
     col_hints: Vec<ColTypeHint>,
     col_formats_setted: Vec<Option<Format>>,
     row_formats_setted: Vec<Option<Format>>,
+    // Set during a GIL-released write: handles are cloneable raw pointers, so pyo3's borrow flag can't guard them
+    busy: AtomicBool,
+    // Set when a later add_worksheet moved this worksheet in memory, leaving handle pointers dangling
+    stale: AtomicBool,
+}
+
+// Rows per GIL-held conversion + GIL-released write round trip: bounds memory and GIL hold time
+const WRITE_ROWS_CHUNK: usize = 1024;
+
+struct PendingCell {
+    row: RowNum,
+    col: ColNum,
+    offset: usize,
+    cell: ExcelCell<'static>,
+}
+
+struct BusyGuard<'a>(&'a AtomicBool);
+
+impl Drop for BusyGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 fn resolve_format_cache<'a>(
@@ -441,6 +478,140 @@ impl XIOWWorksheet {
         }
     }
 
+    fn acquire_busy(&self) -> PyResult<BusyGuard<'_>> {
+        self.ensure_usable()?;
+        let flag = &self.caches_refmut().busy;
+        flag.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .map_err(|_| PyRuntimeError::new_err("Worksheet is already being written from another thread"))?;
+        Ok(BusyGuard(flag))
+    }
+
+    fn ensure_usable(&self) -> PyResult<()> {
+        let caches = self.caches_refmut();
+        if caches.stale.load(Ordering::Acquire) {
+            return Err(PyRuntimeError::new_err(
+                "Worksheet handle is invalidated: another worksheet was added to the workbook after it. \
+                 Write a worksheet completely before adding the next one",
+            ));
+        }
+        if caches.busy.load(Ordering::Acquire) {
+            return Err(PyRuntimeError::new_err("Worksheet is being written from another thread"));
+        }
+        Ok(())
+    }
+
+    fn to_cell<'a>(&self, colidx: usize, value: &'a Bound<'a, PyAny>) -> PyResult<ExcelCell<'a>> {
+        if !self.options.cache_typehints_write_optimization {
+            return ExcelCell::from_py(value);
+        }
+
+        let caches = self.caches_refmut();
+        let cached_hint = caches.col_hints.get(colidx);
+        let (cell, hint) = ExcelCell::from_py_hinted(value, cached_hint)?;
+        if colidx >= caches.col_hints.len() {
+            caches.col_hints.resize(colidx + 1, ColTypeHint::Unknown);
+        }
+        caches.col_hints[colidx] = hint;
+        Ok(cell)
+    }
+
+    fn push_pending(
+        &self,
+        out: &mut Vec<PendingCell>,
+        row: RowNum,
+        col: ColNum,
+        offset: usize,
+        item: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let cell = self.to_cell(col as usize + offset, item)?.into_owned();
+        out.push(PendingCell { row, col: col + offset as ColNum, offset, cell });
+        Ok(())
+    }
+
+    /// GIL-held half of a row write
+    fn collect_row_cells(&self, row: RowNum, col: ColNum, value: &Bound<'_, PyAny>, out: &mut Vec<PendingCell>) -> PyResult<()> {
+        if let Ok(list) = value.cast::<PyList>() {
+            for (offset, item) in list.iter().enumerate() {
+                self.push_pending(out, row, col, offset, &item)?;
+            }
+            return Ok(());
+        }
+
+        if let Ok(tuple) = value.cast::<PyTuple>() {
+            for (offset, item) in tuple.iter().enumerate() {
+                self.push_pending(out, row, col, offset, &item)?;
+            }
+            return Ok(());
+        }
+
+        if let Ok(dict) = value.cast::<PyDict>() {
+            let py = value.py();
+            let mut pos: ffi::Py_ssize_t = 0;
+            let mut key: *mut ffi::PyObject = std::ptr::null_mut();
+            let mut val: *mut ffi::PyObject = std::ptr::null_mut();
+            let mut offset: usize = 0;
+
+            unsafe {
+                while ffi::PyDict_Next(dict.as_ptr(), &mut pos, &mut key, &mut val) != 0 {
+                    let item = Bound::from_borrowed_ptr(py, val);
+                    self.push_pending(out, row, col, offset, &item)?;
+                    offset += 1;
+                }
+            }
+            return Ok(());
+        }
+
+        let iter_result = value.try_iter().map_err(|e| {
+            PyValueError::new_err(format!("Cannot write row from invalid object: {}", e))
+        })?;
+
+        for (offset, item) in iter_result.enumerate() {
+            self.push_pending(out, row, col, offset, &item?)?;
+        }
+
+        Ok(())
+    }
+
+    /// GIL-released half of a row write
+    fn flush_pending(&self, py: Python<'_>, pending: &[PendingCell], rs_formats: &[Option<&Format>]) -> PyResult<()> {
+        let worksheet = self.worksheet_refmut();
+        let caches = self.caches_refmut();
+        let bindings = unsafe { &*self.datatype_format_bindings };
+        let cache_col_formats = self.options.cache_col_formats;
+        let cache_row_formats = self.options.cache_row_formats;
+
+        py.detach(|| -> PyResult<()> {
+            for p in pending {
+                let colidx = p.col as usize;
+                let rowidx = p.row as usize;
+
+                let format = match rs_formats.get(p.offset).copied().flatten() {
+                    Some(f) => Some(f),
+                    None => bindings[ColTypeHint::from_excel_cell(&p.cell).as_index()].as_ref(),
+                };
+
+                let (should_be_set, cell_format) = if cache_col_formats {
+                    resolve_format_cache(&mut caches.col_formats_setted, colidx, format)
+                } else if cache_row_formats {
+                    resolve_format_cache(&mut caches.row_formats_setted, rowidx, format)
+                } else {
+                    (false, format)
+                };
+
+                if should_be_set {
+                    let fmt = cell_format.expect("format must be Some when should_be_set is true");
+                    if cache_col_formats {
+                        worksheet.set_column_format(p.col, fmt).map_err(|e| PyValueError::new_err(e.to_string()))?;
+                    } else {
+                        worksheet.set_row_format(p.row, fmt).map_err(|e| PyValueError::new_err(e.to_string()))?;
+                    }
+                }
+                p.cell.write(worksheet, p.row, p.col, cell_format)?;
+            }
+            Ok(())
+        })
+    }
+
     fn _write_cell_rs(
         &mut self,
         row: RowNum,
@@ -450,19 +621,8 @@ impl XIOWWorksheet {
     ) -> PyResult<()> {
         let colidx = col as usize;
         let rowidx = row as usize;
+        let cell = self.to_cell(colidx, value)?;
         let caches = self.caches_refmut();
-
-        let cell: ExcelCell = if self.options.cache_typehints_write_optimization {
-            let cached_hint = caches.col_hints.get(colidx);
-            let (cell, hint) = ExcelCell::from_py_hinted(value, cached_hint)?;
-            if colidx >= caches.col_hints.len() {
-                caches.col_hints.resize(colidx + 1, ColTypeHint::Unknown);
-            }
-            caches.col_hints[colidx] = hint;
-            cell
-        } else {
-            ExcelCell::from_py(value)?
-        };
 
         let format = match format {
             Some(f) => Some(f),
@@ -520,6 +680,7 @@ impl XIOWWorksheet {
         value: &Bound<'py, PyAny>,
         format: Option<&Bound<'py, XIOFormat>>,
     ) -> PyResult<()> {
+        self.ensure_usable()?;
         unpack_format!(format, rs_format);
         self._write_cell_rs(row, col, value, rs_format)
     }
@@ -532,6 +693,7 @@ impl XIOWWorksheet {
         value: &Bound<'py, PyAny>,
         formats: Option<&Bound<'py, PyList>>,
     ) -> PyResult<()> {
+        self.ensure_usable()?;
         unpack_formats!(formats, rs_formats);
 
         if let Ok(list) = value.cast::<PyList>() {
@@ -588,14 +750,31 @@ impl XIOWWorksheet {
         value: &Bound<'py, PySequence>,
         formats: Option<&Bound<'py, PyList>>,
     ) -> PyResult<()> {
-        let rows_iter = value.try_iter()?;
-        for (r_offset, row_obj_res) in rows_iter.enumerate() {
-            let row_obj = row_obj_res?;
-            let current_row = row + r_offset as RowNum;
-            self.write_row(current_row, col, &row_obj, formats)?;
-        }
+        let py = value.py();
+        let _busy = self.acquire_busy()?;
+        unpack_formats!(formats, rs_formats);
 
-        Ok(())
+        let mut rows_iter = value.try_iter()?;
+        let mut pending: Vec<PendingCell> = Vec::new();
+        let mut next_row = row;
+
+        loop {
+            pending.clear();
+            let mut chunk_rows = 0;
+            while chunk_rows < WRITE_ROWS_CHUNK {
+                let Some(row_obj) = rows_iter.next() else { break };
+                self.collect_row_cells(next_row, col, &row_obj?, &mut pending)?;
+                next_row += 1;
+                chunk_rows += 1;
+            }
+
+            if !pending.is_empty() {
+                self.flush_pending(py, &pending, &rs_formats)?;
+            }
+            if chunk_rows < WRITE_ROWS_CHUNK {
+                return Ok(());
+            }
+        }
     }
 
     #[pyo3(signature = (row, col, value, format = None))]
@@ -606,6 +785,7 @@ impl XIOWWorksheet {
         value: &Bound<'py, PyAny>,
         format: Option<&Bound<'py, XIOFormat>>,
     ) -> PyResult<()> {
+        self.ensure_usable()?;
         if self.options.constant_memory {
             return Err(PyRuntimeError::new_err(
                 "Cannot write columnar data in constant_memory worksheet mode",
@@ -638,6 +818,7 @@ impl XIOWWorksheet {
         value: &Bound<'py, PyAny>,
         format: Option<&Bound<'py, XIOFormat>>,
     ) -> PyResult<()> {
+        self.ensure_usable()?;
         unpack_format!(format, rs_format);
         let worksheet = self.worksheet_refmut();
 
@@ -656,12 +837,14 @@ impl XIOWWorksheet {
         col: ColNum,
         width: XlsxFloat
     ) -> PyResult<()> {
+        self.ensure_usable()?;
         self.worksheet_refmut().set_column_width(col, width).map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(())
     }
 
     #[pyo3(signature = (col, format))]
     fn set_column_format<'py>(&mut self, col: ColNum, format: &Bound<'py, XIOFormat>) -> PyResult<()> {
+        self.ensure_usable()?;
         unpack_format!(Some(format), rs_format);
         let fmt = rs_format.unwrap();
 
@@ -681,6 +864,7 @@ impl XIOWWorksheet {
 
     #[pyo3(signature = (row, format))]
     fn set_row_format<'py>(&mut self, row: RowNum, format: &Bound<'py, XIOFormat>) -> PyResult<()> {
+        self.ensure_usable()?;
         unpack_format!(Some(format), rs_format);
         let fmt = rs_format.unwrap();
 
@@ -767,6 +951,10 @@ impl XIOWWorkbook {
 
     #[pyo3(signature = (name, options = None))]
     fn add_worksheet(&mut self, name: String, options: Option<XIOWOptions>) -> PyResult<XIOWWorksheet> {
+        if self.worksheet_caches.iter().any(|c| c.busy.load(Ordering::Acquire)) {
+            return Err(PyRuntimeError::new_err("Cannot add a worksheet while another worksheet is being written"));
+        }
+
         let ws_options = options.unwrap_or(self.options.clone());
         let worksheet = if ws_options.constant_memory {
             self.workbook.add_worksheet_with_constant_memory()
@@ -785,6 +973,12 @@ impl XIOWWorkbook {
             caches_ptr,
             self.datatype_format_bindings.as_ref() as *const _,
         );
+        // the workbook's Vec<Worksheet> may have been reallocated, moving the earlier worksheets
+        for (idx, handle) in self.worksheets.iter().enumerate() {
+            if !std::ptr::eq(&self.workbook.worksheets()[idx], handle.worksheet) {
+                handle.caches_refmut().stale.store(true, Ordering::Release);
+            }
+        }
         self.worksheets.push(sheet.clone());
 
         Ok(sheet)
