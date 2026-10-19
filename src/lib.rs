@@ -1,3 +1,4 @@
+mod error;
 mod read;
 mod write;
 
@@ -11,6 +12,7 @@ pub fn version() -> PyResult<String> {
 #[pymodule]
 fn fastxlsxio(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(version, m)?)?;
+    error::register(m)?;
 
     m.add_class::<write::writer::XIOWOptions>()?;
     m.add_class::<write::writer::XIOFormat>()?;

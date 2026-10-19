@@ -1,18 +1,10 @@
 from collections.abc import Iterable
 from typing import Any, ClassVar
 
-class ColTypeHint:
-    """Classifier of the Python value written into a cell, used internally
-    for column type-hint caching and as the key for type-bound default
-    formats registered via `XIOWWorkbook.add_format(..., bind_to_datatype=...)`.
+# Bad `row`/`col` arguments (negative, too big, wrong type) raise a plain OverflowError / TypeError.
 
-    `Unknown` and `Dynamic` are internal placeholders and cannot be used as
-    a `bind_to_datatype` value:
-    - `Unknown` marks a column that hasn't been written to yet.
-    - `Dynamic` marks a column that turned out to hold mixed types — the
-      fast type-hint path is disabled for it, every write is classified
-      from scratch.
-    """
+class ColTypeHint:
+    """Cell value kind. `Unknown` and `Dynamic` are internal and can't be bound to a format."""
 
     Float: ClassVar[ColTypeHint]
     Int: ClassVar[ColTypeHint]
@@ -31,12 +23,12 @@ class ColTypeHint:
 
 class XIOWOptions:
     """
-    `constant_memory` - flush buffer on disk. Chaotic writes are not allowed. More info in rust_xlsxwriter doc.\n
-    `cache_typehints_write_optimization` - Expected to have static data types on columns. Only nullable allowed
+    - `constant_memory` - flush rows to disk as you go: write top to bottom, no `write_column`.
+    - `cache_typehints_write_optimization` - assume a column keeps one type (None is fine).
+    - `cache_col_formats` / `cache_row_formats` - don't re-set a format a column / row already has.
 
-    `cache_col_formats` - cache cells format upon columns\n
-    `cache_row_formats` - cache cells format upon rows\n
-    P.S. Both values `cache_col_formats` and `cache_row_formats` should not be used at the same time due prioritized col branching\n
+    Raises:
+        XIOArgumentError: both `cache_col_formats` and `cache_row_formats` are on.
     """
 
     def __init__(
@@ -64,224 +56,175 @@ class XIOWOptions:
     def cache_typehints_write_optimization(self, value: bool) -> None: ...
 
 class XIOFormat:
+    """Cell format. Get one from `XIOWWorkbook.add_format`."""
+
     @staticmethod
-    def from_properties(properties: dict[str, Any]) -> XIOFormat: ...
+    def from_properties(properties: dict[str, Any]) -> XIOFormat:
+        """Only `num_format` (str) and `bold` (bool) work for now.
+
+        Raises:
+            XIOUnsupportedError: any other key.
+            TypeError: a value has the wrong type (e.g. `num_format=5`).
+        """
 
 class XIOWWorksheet:
-    """xlsxwriter worksheet-like class"""
+    """Get it from `XIOWWorkbook.add_worksheet`. Write a sheet fully before adding the next one,
+    older handles stop working (`XIOStateError`).
 
-    def __init__(self, title: str) -> None:
-        """Initialize a new worksheet with the specified title.
-
-        Parameters
-        ----------
-        title : str
-            The title of the worksheet.
-        """
+    Ints beyond +-2**53 are written as text (Excel can't hold them exactly); unknown objects as `str(value)`.
+    """
 
     @property
     def name(self) -> str: ...
     @property
     def constant_memory(self) -> bool: ...
+    @property
+    def options(self) -> XIOWOptions: ...
     def write_cell(self, row: int, col: int, value: Any, format: XIOFormat | None = None) -> None:
-        """Write a value to a specific cell in the worksheet.
+        """Write one value. `row` and `col` are 0-based.
 
-        Parameters
-        ----------
-        row : int
-            0-based row index.
-        col : int
-            0-based column index.
-        value : Any
-            The value to write to the cell.
-        format : XIOFormat | None = None
-            value format.
+        Raises:
+            XIOConversionError: the value can't be converted.
+            XIOXlsxError: the cell is outside Excel's limits.
+            XIOStateError: the sheet is busy or stale.
         """
 
-    def merge_range(first_row: int, first_col: int, last_row: int, last_col: int, value: Any, format: XIOFormat | None = None) -> None:
-        """Merge a range of cells.
+    def merge_range(
+        self,
+        first_row: int,
+        first_col: int,
+        last_row: int,
+        last_col: int,
+        value: Any,
+        format: XIOFormat | None = None,
+    ) -> None:
+        """Merge a range (0-based, ends included) and put `value` in it as text.
 
-        Parameters
-        ----------
-        first_row : int
-            The first row of the range. (All zero indexed.)
-        first_col : int
-            The first column of the range.
-        last_row : int
-            The last row of the range.
-        last_col : int
-            The last column of the range.
-        value : Any
-            The value to write to the cell.
-        format : XIOFormat | None = None
-            value format.
+        Raises:
+            XIOXlsxError: single-cell range, overlaps another merge, or out of Excel's limits.
+            XIOStateError: the sheet is busy or stale.
         """
 
-    def write_row(self, row: int, col: int, value: Iterable[Any], formats: list[XIOFormat] | None = None) -> None:
-        """Write a row of values starting from a specific cell.
+    def write_row(self, row: int, col: int, value: Iterable[Any], formats: list[XIOFormat | None] | None = None) -> None:
+        """Write values left to right from (`row`, `col`). `formats[i]` is for the i-th value.
 
-        Parameters
-        ----------
-        row : int
-            0-based row index.
-        col : int
-            0-based starting column index.
-        value : Iterable[Any]
-            The 1D iterable of cell values to write.
-        formats : list[XIOFormat] | None = None
-            values formats.
+        Raises:
+            XIOIterableError: `value` isn't iterable.
+            XIOOverflowError: the row runs past the last column index that fits (u16).
+            XIOConversionError: a value can't be converted.
+            XIOXlsxError: a cell is outside Excel's limits.
+            XIOStateError: the sheet is busy or stale.
         """
 
-    def write_rows(self, row: int, col: int, value: Iterable[Iterable[Any]], formats: list[XIOFormat] | None = None) -> None:
-        """Write multiple rows of values starting from a specific cell.
+    def write_rows(
+        self,
+        row: int,
+        col: int,
+        value: Iterable[Iterable[Any]],
+        formats: list[XIOFormat | None] | None = None,
+    ) -> None:
+        """Write many rows from (`row`, `col`). `formats[i]` applies to the i-th column of every row.
+        Rows are written in chunks of 1024: on error the earlier chunks are already in.
 
-        Parameters
-        ----------
-        row : int
-            0-based starting row index.
-        col : int
-            0-based starting column index.
-        value : Iterable[Iterable[Any]]
-            The 2D iterable of row values to write.
-        formats : list[XIOFormat] | None = None
-            values formats.
+        Raises:
+            XIOIterableError: a row isn't iterable.
+            XIOOverflowError: a row or column index doesn't fit (u32 / u16).
+            XIOConversionError: a value can't be converted. `.address` points at it.
+            XIOXlsxError: a cell is outside Excel's limits.
+            XIOStateError: the sheet is busy or stale.
         """
 
     def write_column(self, row: int, col: int, value: Iterable[Any], format: XIOFormat | None = None) -> None:
-        """Write a column of values starting from a specific cell.
+        """Write values top to bottom from (`row`, `col`). Not available in `constant_memory` mode.
 
-        Parameters
-        ----------
-        row : int
-            0-based starting row index.
-        col : int
-            0-based column index.
-        value : Iterable[Any]
-            The 1D iterable of column values to write.
-        format : XIOFormat | None = None
-            values format.
+        Raises:
+            XIOUnsupportedError: the worksheet is in `constant_memory` mode.
+            XIOArgumentError: `format` was passed (not supported here yet).
+            XIOIterableError: `value` isn't iterable.
+            XIOOverflowError: the column runs past the last row index that fits (u32).
+            XIOConversionError: a value can't be converted.
+            XIOXlsxError: a cell is outside Excel's limits.
+            XIOStateError: the sheet is busy or stale.
         """
 
-    def write_columns(self, row: int, col: int, value: Iterable[Iterable[Any]], formats: list[XIOFormat] | None = None) -> None:
-        """Write multiple columns of values starting from a specific cell.
+    def set_column_width(self, col: int, width: float) -> None:
+        """Set a column's width (in characters).
 
-        Parameters
-        ----------
-        row : int
-            0-based starting row index.
-        col : int
-            0-based starting column index.
-        value : Iterable[Iterable[Any]]
-            The columns of values to write.
-        formats : list[XIOFormat] | None = None
-            values formats.
-        """
-
-    def set_column_width(self, col: int, width: float) -> bool:
-        """
-        Set the width of a single column
-
-        Args:
-            col:   First column (zero-indexed).
-            width: Column width.
-
-        Returns:
-            0:  Success.
-            -1: Column number is out of worksheet bounds.
-
+        Raises:
+            XIOXlsxError: column is out of Excel's limits.
+            XIOStateError: the sheet is busy or stale.
         """
 
     def set_column_format(self, col: int, format: XIOFormat) -> None:
+        """Default format for a column; cells with their own format keep it.
+
+        Raises:
+            XIOXlsxError: column is out of Excel's limits.
+            XIOStateError: the sheet is busy or stale.
         """
-        Set the format for a column of cells.
 
-        The `set_column_format()` method is used to change the default format of a
-        column. Any unformatted data written to that column will then adopt that
-        format. Formatted data written to the column will maintain its own cell
-        format. See the example below.
-
-        A future version of this library may support automatic merging of
-        explicit cell formatting with the column formatting but that isn't
-        currently supported.
-
-        # Parameters
-
-        - `col`: The zero indexed column number.
-        - `format`: The [`XIOFormat`] property for the cell.
-        """
     def set_row_format(self, row: int, format: XIOFormat) -> None:
-        """
-        Set the format for a row of cells.
+        """Same as `set_column_format`, but for a row.
 
-        The `set_row_format()` method is used to change the default format of a
-        row. Any unformatted data written to that row will then adopt that
-        format. Formatted data written to the row will maintain its own cell
-        format. See the example below.
-
-        A future version of this library may support automatic merging of
-        explicit cell formatting with the row formatting but that isn't
-        currently supported.
-
-        # Parameters
-
-        - `row`: The zero indexed row number.
-        - `format`: The [`XIOFormat`] property for the cell.
+        Raises:
+            XIOXlsxError: row is out of Excel's limits.
+            XIOStateError: the sheet is busy or stale.
         """
 
 class XIOWWorkbook:
-    """xlsxwriter workbook-like class"""
+    """Add sheets, write into them, `save()`."""
 
-    def __init__(self, filepath: str | None, options: XIOWOptions | None = None) -> None: ...
+    def __init__(self, filepath: str | None = None, options: XIOWOptions | None = None) -> None:
+        """`filepath` is the default for `save()`, `options` the default for new worksheets."""
+
+    @property
+    def options(self) -> XIOWOptions: ...
+    @property
+    def sheetnames(self) -> list[str]:
+        """Names of all worksheets, in order."""
+
     def add_worksheet(self, name: str, options: XIOWOptions | None = None) -> XIOWWorksheet:
-        """Create a new worksheet with the specified name.
+        """Add a sheet. `options` overrides the workbook's options for this sheet only.
 
-        Parameters
-        ----------
-        name : str
-            The name of the new worksheet.
-        options : XIOWOptions, uses default XIOWOptions
-            options which control some logic
-
-        Returns
-        -------
-        XIOWWorksheet
-            The newly created worksheet.
+        Raises:
+            XIOXlsxError: bad name (empty, over 31 chars, contains `[ ] : * ? / \\`).
+            XIOStateError: another worksheet is being written right now.
         """
+
     def add_format(
         self,
         properties: dict[str, Any],
         bind_to_datatype: ColTypeHint | None = None,
     ) -> XIOFormat:
-        """Adds format to workbook
+        """Properties: `num_format` (str), `bold` (True).
 
-        Parameters
-        ----------
-        properties : dict[str, Any]
-            "num_format" : str
-                format for numbers
-            "bold" : bool
-                set or unset bold to text. By default is False so True is only logical value here
-        bind_to_datatype : ColTypeHint | None = None
-            When provided, this format becomes the default for every cell of
-            that type written afterwards (in this and any worksheet created
-            after this call) that isn't given an explicit `format`. Calling
-            this again with the same `bind_to_datatype` replaces the
-            previously bound format. Raises ValueError for `ColTypeHint.Unknown`.
+        With `bind_to_datatype` it becomes the default for every cell of that type written from
+        now on (re-binding replaces it).
 
-        Returns
-        -------
-        XIOFormat
-            The format class to use in XIOWWorksheet.write_... methods
+        Raises:
+            XIOArgumentError: `bind_to_datatype` is `ColTypeHint.Unknown` or `Dynamic`.
+            XIOUnsupportedError: unknown property.
         """
+
     def get_by_idx(self, idx: int) -> XIOWWorksheet:
-        """Get a worksheet by its 0-based index."""
+        """Sheet by 0-based index.
+
+        Raises:
+            XIONotFoundError: no sheet at that index.
+        """
 
     def get_by_name(self, name: str) -> XIOWWorksheet:
-        """Get a worksheet by its name."""
+        """Sheet by name.
+
+        Raises:
+            XIONotFoundError: no sheet with that name.
+        """
 
     def save(self, path: str | None = None) -> None:
-        """Save the workbook to the specified file path."""
+        """`path` wins over the constructor's `filepath`.
 
-    @property
-    def sheetnames(self) -> list[str]:
-        """Get the names of all worksheets in the workbook."""
+        Raises:
+            XIOArgumentError: no path given anywhere.
+            XIOFileError: can't write the file, or the workbook is invalid (e.g. two sheets
+                with the same name). `.reason` has the details.
+        """
