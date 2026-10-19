@@ -61,7 +61,37 @@ pub fn pybool_xlsx_format<'py>(b: &Bound<'py, PyBool>) -> XIOResult<&'py str> {
     Ok(if b.is_true() { "Да" } else { "Нет" })
 }
 
+/// "dd.mm.yyyy, hh:mm:ss" items joined by "; ", or None if some item isn't a datetime
+fn pydatetimes_xlsx_format<'py>(seq: &Bound<'py, PySequence>) -> XIOResult<Option<String>> {
+    let mut buffer = String::with_capacity(64);
+    for (i, v) in seq.try_iter()?.enumerate() {
+        let value = v?;
+        let Ok(dt) = value.cast::<PyDateTime>() else {
+            return Ok(None);
+        };
+        if i > 0 {
+            buffer.push_str("; ");
+        }
+        let _ = write!(
+            buffer,
+            "{:02}.{:02}.{:04}, {:02}:{:02}:{:02}",
+            dt.get_day(),
+            dt.get_month(),
+            dt.get_year(),
+            dt.get_hour(),
+            dt.get_minute(),
+            dt.get_second(),
+        );
+    }
+    Ok(Some(buffer))
+}
+
+/// Datetimes are joined by "; ", everything else by ", "
 pub fn pyone_dimensional_iter_xlsx_format<'py>(seq: &Bound<'py, PySequence>) -> XIOResult<String> {
+    if let Some(datetimes) = pydatetimes_xlsx_format(seq)? {
+        return Ok(datetimes);
+    }
+
     let mut buffer = String::with_capacity(64);
     for (i, v) in seq.try_iter()?.enumerate() {
         let value = v?;
