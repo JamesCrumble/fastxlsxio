@@ -1,7 +1,5 @@
 # fastxlsxio
 
-[Originally written from](https://github.com/shuangluoxss/fastxlsx)
-
 **A lightweight, high-performance Python library for fast XLSX I/O, built with Rust.**
 *The project aims to provide xlsx writing with the same functionality as Python's `xlsxwriter`, only faster, while keeping the reading implementation as it came from the `fastxlsx` project.*
 
