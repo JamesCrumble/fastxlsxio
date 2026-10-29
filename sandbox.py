@@ -15,7 +15,8 @@ STATIC_COLS = 7
 DYNAMIC_COLS = 10
 NUM_COLS = STATIC_COLS + DYNAMIC_COLS
 
-TPOOL = ThreadPoolExecutor(max_workers=2)
+SHEETS = ("Sheet 3", "Sheet 1", "Sheet 2")
+TPOOL = ThreadPoolExecutor(max_workers=len(SHEETS))
 
 
 def data_():
@@ -41,8 +42,6 @@ data = list(data_by_batch())
 
 
 def fastxlsxio_build(xlsx: str, multithreaded: bool = False):
-    sheets = ("Sheet 3", "Sheet 1", "Sheet 2")
-
     options = XIOWOptions(constant_memory=True, cache_typehints_write_optimization=True)
     excel = XIOWWorkbook(xlsx, options=options)
     excel.add_format({"num_format": "###.0"}, bind_to_datatype=ColTypeHint.Int)
@@ -51,14 +50,15 @@ def fastxlsxio_build(xlsx: str, multithreaded: bool = False):
     excel.add_format({"num_format": "dd.mm.yyyy hh:mm:ss"}, bind_to_datatype=ColTypeHint.DateTime)
     excel.add_format({"num_format": "hh:mm:ss"}, bind_to_datatype=ColTypeHint.Time)
 
-    tasks = list()
+    tasks = list()  # noqa
     rows_written: int = 0
-    for sheet_name in sheets:
+    for sheet_name in SHEETS:
+        _ = excel.add_worksheet(sheet_name, options)
 
         def _write_sheet(sheet_name: str) -> int:
             st = time.monotonic()
             acc = 0
-            sheet = excel.add_worksheet(sheet_name, options)
+            sheet = excel.get_by_name(sheet_name)
 
             for i, batch in enumerate(data):
                 sheet.write_rows(i * len(batch), 0, batch)
@@ -70,11 +70,11 @@ def fastxlsxio_build(xlsx: str, multithreaded: bool = False):
         if not multithreaded:
             rows_written += _write_sheet(sheet_name)
         else:
-            tasks.append(TPOOL.submit(_write_sheet, sheet_name))
+            tasks.append((_write_sheet, sheet_name))
 
     if tasks:
-        for res in as_completed(tasks):
-            rows_written = res.result()
+        for res in as_completed(TPOOL.submit(*task) for task in tasks):
+            rows_written += res.result()
 
     print(f"fastxlsxio: {rows_written}x{NUM_COLS} rows written")
 
@@ -84,8 +84,6 @@ def fastxlsxio_build(xlsx: str, multithreaded: bool = False):
 
 
 def xlsxwriter_build(xlsx: str, multithreaded: bool = False):
-    sheets = ("Sheet 3", "Sheet 1", "Sheet 2")
-
     excel = Workbook(xlsx, options={"constant_memory": True, "remove_timezone": True})
     intfmt = excel.add_format({"num_format": "###.0"})
     floatfmt = excel.add_format({"num_format": "###.123"})
@@ -93,13 +91,14 @@ def xlsxwriter_build(xlsx: str, multithreaded: bool = False):
     datetimefmt = excel.add_format({"num_format": "dd.mm.yyyy hh:mm:ss"})
     timefmt = excel.add_format({"num_format": "hh:mm:ss"})
 
-    tasks = list()
+    tasks = list()  # noqa
     rows_written: int = 0
-    for sheet_name in sheets:
+    for sheet_name in SHEETS:
+        _ = excel.add_worksheet(sheet_name)
 
         def _write_sheet(sheet_name: str) -> int:
             st = time.monotonic()
-            sheet = excel.add_worksheet(sheet_name)
+            sheet = excel.get_worksheet_by_name(sheet_name)
 
             row_: int = 0
             for batch in data:
@@ -129,11 +128,11 @@ def xlsxwriter_build(xlsx: str, multithreaded: bool = False):
         if not multithreaded:
             rows_written += _write_sheet(sheet_name)
         else:
-            tasks.append(TPOOL.submit(_write_sheet, sheet_name))
+            tasks.append((_write_sheet, sheet_name))
 
     if tasks:
-        for res in as_completed(tasks):
-            rows_written = res.result()
+        for res in as_completed(TPOOL.submit(*task) for task in tasks):
+            rows_written += res.result()
 
     print(f"xlsxwriter: {rows_written}x{NUM_COLS} rows written")
 
@@ -145,12 +144,12 @@ def xlsxwriter_build(xlsx: str, multithreaded: bool = False):
 async def main():
     print("Start fastxlsxio")
     st = time.monotonic()
-    fastxlsxio_build("fastxlsxio_build.xlsx")
+    fastxlsxio_build("fastxlsxio_build.xlsx", True)
     print(f"write for {time.monotonic() - st:.2f} fastxlsxio")
 
     print("Start xlsxwriter")
     st = time.monotonic()
-    xlsxwriter_build("xlsxwriter_build.xlsx")
+    xlsxwriter_build("xlsxwriter_build.xlsx", True)
     print(f"write for {time.monotonic() - st:.2f} xlsxwriter")
 
 
