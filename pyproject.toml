@@ -31,11 +31,6 @@ features = ["pyo3/extension-module"]
 python-source = "python"
 module-name = "fastxlsxio.fastxlsxio"
 
-[profile.release]
-opt-level = 3       # Maximum optimization level (default for release)
-lto = true          # Enable Link-Time Optimization across crates
-codegen-units = 1   # Reduce parallel code generation units for better optimization
-
 [project.optional-dependencies]
 bench = [
     "pytest",

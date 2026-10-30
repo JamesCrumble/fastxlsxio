@@ -2,7 +2,7 @@ use crate::error::{XIOError, XIOResult};
 use crate::write::pyconv::*;
 
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::LazyLock;
 
 use pyo3::ffi;
@@ -11,6 +11,8 @@ use pyo3::types::{PyBool, PyDate, PyDateTime, PyDict, PyFloat, PyTuple, PyList, 
 use rust_xlsxwriter::{Workbook, Worksheet, Format, ExcelDateTime, RowNum, ColNum};
 
 pub static DEFAULT_FORMAT: LazyLock<Format> = LazyLock::new(Format::default);
+
+// TODO: make more relevant naming of the structs
 
 #[pyclass(from_py_object, get_all, set_all)]
 #[derive(Clone, Debug, PartialEq)]
@@ -398,6 +400,8 @@ impl XIOFormat {
 // so cloning a worksheet handle never copies grown caches.
 #[derive(Default)]
 struct WorksheetCaches {
+    // shared by all handle clones, refreshed by add_worksheet
+    worksheet: AtomicPtr<Worksheet>,
     col_hints: Vec<ColTypeHint>,
     col_formats_setted: Vec<Option<Format>>,
     row_formats_setted: Vec<Option<Format>>,
@@ -459,7 +463,6 @@ fn resolve_format_cache<'a>(
 #[pyclass(from_py_object, weakref)]
 #[derive(Clone)]
 pub struct XIOWWorksheet {
-    worksheet: *mut Worksheet,
     caches: *mut WorksheetCaches,
     options: XIOWOptions,
     datatype_format_bindings: *const [Option<Format>; ColTypeHint::COUNT],
@@ -471,14 +474,16 @@ impl XIOWWorksheet {
 
     #[inline(always)]
     fn worksheet_ref(&self) -> &Worksheet {
-        assert!(!self.worksheet.is_null(), "ERROR: Something went wrong. Cannot use worksheet which is deallocated!!!");
-        unsafe { &*self.worksheet }
+        let ptr = self.caches_refmut().worksheet.load(Ordering::Acquire);
+        assert!(!ptr.is_null(), "ERROR: Something went wrong. Cannot use worksheet which is deallocated!!!");
+        unsafe { &*ptr }
     }
 
     #[inline(always)]
     fn worksheet_refmut(&self) -> &mut Worksheet {
-        assert!(!self.worksheet.is_null(), "ERROR: Something went wrong. Cannot use worksheet which is deallocated!!!");
-        unsafe { &mut *self.worksheet }
+        let ptr = self.caches_refmut().worksheet.load(Ordering::Acquire);
+        assert!(!ptr.is_null(), "ERROR: Something went wrong. Cannot use worksheet which is deallocated!!!");
+        unsafe { &mut *ptr }
     }
 
     #[inline(always)]
@@ -488,13 +493,11 @@ impl XIOWWorksheet {
     }
 
     fn new(
-        worksheet: &mut Worksheet,
         options: XIOWOptions,
         caches: *mut WorksheetCaches,
         datatype_format_bindings: *const [Option<Format>; ColTypeHint::COUNT],
     ) -> Self {
         Self {
-            worksheet: worksheet as *mut Worksheet,
             caches,
             options,
             datatype_format_bindings,
@@ -985,7 +988,6 @@ impl XIOWWorkbook {
         self.worksheet_caches.push(caches);
 
         let sheet = XIOWWorksheet::new(
-            worksheet,
             ws_options,
             caches_ptr,
             self.datatype_format_bindings.as_ref() as *const _,
@@ -993,8 +995,8 @@ impl XIOWWorkbook {
         
         // refresh pointers cause they can be moved
         let rs_sheets = self.workbook.worksheets();
-        for (idx, handle) in self.worksheets.iter_mut().enumerate() {
-            handle.worksheet = &rs_sheets[idx] as *const Worksheet as *mut Worksheet;
+        for (idx, caches) in self.worksheet_caches.iter().enumerate() {
+            caches.worksheet.store(&rs_sheets[idx] as *const Worksheet as *mut Worksheet, Ordering::Release);
         }
 
         self.worksheets.push(sheet.clone());

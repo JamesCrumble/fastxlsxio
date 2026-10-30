@@ -23,5 +23,5 @@ rust_xlsxwriter = { version = "0.99.0", features = ["chrono", "zlib", "ryu", "co
 lto = true         # Enables link to optimizations
 strip = true       # Remove debug symbols
 codegen-units = 1  # Compile crates one after another so the compiler can optimize better
-panic = "abort"    # Strip expensive panic clean-up logic
+# panic = "abort"    # Strip expensive panic clean-up logic
 opt-level = 3      # all optimizations
