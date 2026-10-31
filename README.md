@@ -146,8 +146,11 @@ Options are readable and settable as attributes (`ws.options`, `wb.options`).
 `save()` releases it for the whole save. A worksheet being written from one thread raises `XIOStateError` if another
 thread touches it, and so does `add_worksheet` while any sheet is mid-write.
 
-**Write a worksheet completely before adding the next one.** Adding a worksheet can move the earlier ones in memory,
-and their handles then stop working (`XIOStateError`) — including handles returned by `get_by_name` / `get_by_idx`.
+**Worksheet handles stay valid after more worksheets are added.** This includes handles returned by `get_by_name` /
+`get_by_idx`, so different worksheets can be written from different threads at the same time. Add all the worksheets
+you need before starting the threads, since `add_worksheet` can't run while any sheet is mid-write.
+
+**`save()` is not thread-safe.**
 
 ## Reading
 
